@@ -154,7 +154,7 @@ git-tree-sha1 = "465a70f0fc7d443a00dcdc3267a497397b8a3899"
 uuid = "d0879d2d-cac2-40c8-9cee-1863dc0c7391"
 version = "0.1.2"
 
-[[deps.MatricialMissing]]
+[[deps.MissingPatterns]]
 path = ".."
 uuid = "41be38da-c9ad-4b24-9b1b-21c83f144a15"
 version = "0.1.0"

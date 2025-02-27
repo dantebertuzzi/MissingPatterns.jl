@@ -1,14 +1,14 @@
 ```@meta
-CurrentModule = MatricialMissing
+CurrentModule = MissingPatterns
 ```
 
-# MatricialMissing
+# MissingPatterns
 
-Documentation for [MatricialMissing](https://github.com/dantebertuzzi/MatricialMissing.jl).
+Documentation for [MissingPatterns](https://github.com/dantebertuzzi/MissingPatterns.jl).
 
 ```@index
 ```
 
 ```@autodocs
-Modules = [MatricialMissing]
+Modules = [MissingPatterns]
 ```

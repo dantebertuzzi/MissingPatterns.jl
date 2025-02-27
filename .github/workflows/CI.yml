@@ -55,9 +55,9 @@ jobs:
       - run: |
           julia --project=docs -e '
             using Documenter: DocMeta, doctest
-            using MatricialMissing
-            DocMeta.setdocmeta!(MatricialMissing, :DocTestSetup, :(using MatricialMissing); recursive=true)
-            doctest(MatricialMissing)'
+            using MissingPatternss
+            DocMeta.setdocmeta!(MissingPatternss, :DocTestSetup, :(using MissingPatternss); recursive=true)
+            doctest(MissingPatternss)'
       - run: julia --project=docs docs/make.jl
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

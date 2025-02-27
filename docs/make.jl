@@ -1,16 +1,16 @@
-using MatricialMissing
+using MissingPatterns
 using Documenter
 
-DocMeta.setdocmeta!(MatricialMissing, :DocTestSetup, :(using MatricialMissing); recursive=true)
+DocMeta.setdocmeta!(MissingPatterns, :DocTestSetup, :(using MissingPatterns); recursive=true)
 
 makedocs(;
-    modules=[MatricialMissing],
+    modules=[MissingPatterns],
     authors="Dante Bertuzzi",
-    repo="https://github.com/dantebertuzzi/MatricialMissing.jl/blob/{commit}{path}#{line}",
-    sitename="MatricialMissing.jl",
+    repo="https://github.com/dantebertuzzi/MissingPatterns.jl/blob/{commit}{path}#{line}",
+    sitename="MissingPatterns.jl",
     format=Documenter.HTML(;
         prettyurls=get(ENV, "CI", "false") == "true",
-        canonical="https://dantebertuzzi.github.io/MatricialMissing.jl",
+        canonical="https://dantebertuzzi.github.io/MissingPatterns.jl",
         assets=String[],
     ),
     pages=[
@@ -19,5 +19,5 @@ makedocs(;
 )
 
 deploydocs(;
-    repo="github.com/dantebertuzzi/MatricialMissing.jl",
+    repo="github.com/dantebertuzzi/MissingPatterns.jl",
 )
