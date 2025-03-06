@@ -5,20 +5,11 @@
 
 MissingPatterns is a Julia package designed to visualize missing data patterns in DataFrames. It provides a simple and intuitive way to identify and analyze missing values in your datasets using heatmaps.
 
-## Instalação
-
-Para instalar o pacote, use o gerenciador de pacotes do Julia:
-
-```julia
-using Pkg
-Pkg.add("MissingPatterns")
-`MissingPatterns` is a Julia package designed to visualize missing data patterns in DataFrames. It provides a simple and intuitive way to identify and analyze missing values in your datasets using heatmaps.
-
 ## Installation
 
 To install the `MissingPatterns` package, open Julia and run:
 
-```
+```julia
 using Pkg
 Pkg.add("MissingPatterns")
 ```
@@ -26,7 +17,7 @@ Pkg.add("MissingPatterns")
 ## Usage
 ### Basic Example
 
-```
+```julia
 using DataFrames
 using MissingPatterns
 
