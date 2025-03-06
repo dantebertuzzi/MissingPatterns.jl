@@ -1,21 +1,21 @@
-using DataFrames, MissingPatterns, Random
+using DataFrames
+using MissingPatterns
+using Random
 
-# Configurando a semente para reprodutibilidade
+# Configuração para reproduzibilidade
 Random.seed!(123)
 
-# Criando um DataFrame com mais dados e valores faltantes
-n = 100  # Número de linhas
-df = DataFrame(
-    A = rand([1, 2, 3, missing], n),
-    B = rand([10, 20, 30, 40, missing], n),
-    C = rand([100, 200, 300, missing], n),
-    D = rand([missing, 5.5, 6.5, 7.5, 8.5], n),
-    E = rand([missing, "X", "Y", "Z"], n)
-)
+# Criando um DataFrame com 10.000 linhas e 5 colunas
+n_rows = 10_000
+n_cols = 5
+df = DataFrame(rand(n_rows, n_cols), :auto)
 
-# Plotando com orientação horizontal
-plotmissing(df, orientation=:horizontal, dpi=150, color_missing=:red, color_present=:green, line_color=:blue, line_width=2)
+# Adicionando valores ausentes aleatoriamente (20% de missing)
+for col in names(df)
+    df[!, col] = allowmissing(df[!, col])
+    df[rand(1:n_rows, Int(round(0.2 * n_rows))), col] .= missing
+end
 
-# Plotando com orientação vertical (padrão)
-plotmissing(df, dpi=900)
+# Visualizando os padrões de missing
+plotmissing(df, orientation=:vertical, tick_step=1000)  # Vertical
 

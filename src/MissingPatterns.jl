@@ -11,12 +11,12 @@ function plotmissing(df; plot_size=(1000, 800), orientation::Symbol=:vertical, d
     if orientation == :horizontal
         missing_values = permutedims(missing_values)  # Transpõe a matriz
         plot_size = reverse(plot_size)
-        x_ticks = (1:tick_step:size(missing_values, 2), 1:tick_step:size(missing_values, 2))  # Ticks das colunas no eixo x
-        y_ticks = (1:size(missing_values, 1), names(df))                                      # Ticks das linhas no eixo y
+        x_ticks = (1:tick_step:size(missing_values, 2), 1:tick_step:size(missing_values, 2))  # Ticks das linhas no eixo x
+        y_ticks = (1:size(missing_values, 1), names(df))  # Ticks das colunas no eixo y (nomes das colunas originais)
         x_label = ""
         y_label = ""
     else
-        x_ticks = (1:size(missing_values, 2), names(df))                                      # Ticks das colunas no eixo x
+        x_ticks = (1:size(missing_values, 2), names(df))  # Ticks das colunas no eixo x (nomes das colunas)
         y_ticks = (1:tick_step:size(missing_values, 1), 1:tick_step:size(missing_values, 1))  # Ticks das linhas no eixo y
         x_label = ""
         y_label = ""

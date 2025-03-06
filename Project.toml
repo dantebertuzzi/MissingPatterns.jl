@@ -5,10 +5,12 @@ version = "0.1.0"
 
 [deps]
 Plots = "91a5bcdd-55d7-5caf-9e0b-520d859cae80"
+Registrator = "4418983a-e44d-11e8-3aec-9789530b3b3e"
 Test = "8dfed614-e22c-5e08-85e1-65c5234f0b40"
 
 [compat]
 Plots = "1.40.9"
+Registrator = "1.9.4"
 Test = "1.11.0"
 julia = "1"
 
