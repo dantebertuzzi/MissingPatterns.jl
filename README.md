@@ -13,6 +13,7 @@ Pkg.add("MissingPatterns")
 ## Usage
 ### Basic Example
 
+```
 using DataFrames
 using MissingPatterns
 
@@ -24,6 +25,7 @@ plotmissing(df, orientation=:vertical)
 
 # Plot missing patterns in horizontal orientation
 plotmissing(df, orientation=:horizontal)
+```
 
 [![Stable](https://img.shields.io/badge/docs-stable-blue.svg)](https://dantebertuzzi.github.io/MissingPatterns.jl/stable)
 [![Dev](https://img.shields.io/badge/docs-dev-blue.svg)](https://dantebertuzzi.github.io/MissingPatterns.jl/dev)
