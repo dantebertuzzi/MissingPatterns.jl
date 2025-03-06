@@ -6,9 +6,10 @@
 
 To install the `MissingPatterns` package, open Julia and run:
 
-julia
+```
 using Pkg
 Pkg.add("MissingPatterns")
+```
 
 ## Usage
 ### Basic Example
