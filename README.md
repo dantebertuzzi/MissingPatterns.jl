@@ -27,6 +27,24 @@ plotmissing(df, orientation=:vertical)
 # Plot missing patterns in horizontal orientation
 plotmissing(df, orientation=:horizontal)
 ```
+#### Customizing the Plot
+You can customize the appearance of the plot using various keyword arguments:
+
+- `plot_size`: Tuple specifying the size of the plot (default: (1000, 800)).
+
+- `orientation`: Symbol (`:vertical` or `:horizontal`) to set the orientation of the plot (default: `:vertical`).
+
+- `dpi`: Integer specifying the resolution of the plot (default: 100).
+
+- `color_missing`: Color for missing values (default: `:grey10`).
+
+- `color_present`: Color for non-missing values (default: `:white`).
+
+- `line_color`: Color for grid lines (default: `:white`).
+
+- `line_width`: Width of grid lines (default: 1).
+
+- `tick_step`: Step size for ticks on the axes (default: 5).
 
 [![Stable](https://img.shields.io/badge/docs-stable-blue.svg)](https://dantebertuzzi.github.io/MissingPatterns.jl/stable)
 [![Dev](https://img.shields.io/badge/docs-dev-blue.svg)](https://dantebertuzzi.github.io/MissingPatterns.jl/dev)
