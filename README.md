@@ -39,6 +39,7 @@ plotmissing(df, orientation=:vertical)
 # Plot missing patterns in horizontal orientation
 plotmissing(df, orientation=:horizontal)
 ```
+
 #### Customizing the Plot
 You can customize the appearance of the plot using various keyword arguments:
 
