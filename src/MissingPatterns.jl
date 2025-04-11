@@ -4,6 +4,25 @@ using Plots
 
 export plotmissing
 
+"""
+plotmissing(df; plot_size=(1000, 800), orientation=:vertical, dpi=100, color_missing=:grey10, color_present=:white, line_color=:white, line_width=1, tick_step=5)
+
+Plots a heatmap showing missing value patterns in a DataFrame.
+
+# Arguments
+- `df`: The input DataFrame.
+- `plot_size`: Tuple specifying the size of the plot.
+- `orientation`: Orientation of the heatmap (`:vertical` or `:horizontal`).
+- `dpi`: Resolution of the plot.
+- `color_missing`: Color for missing values.
+- `color_present`: Color for present values.
+- `line_color`: Color of the grid lines.
+- `line_width`: Width of the grid lines.
+- `tick_step`: Step size for ticks on the axes.
+
+# Returns
+- A heatmap plot.
+"""
 function plotmissing(df; plot_size=(1000, 800), orientation::Symbol=:vertical, dpi::Int=100, color_missing=:grey10, color_present=:white, line_color=:white, line_width=1, tick_step::Int=5)
     missing_values = Matrix{Bool}(ismissing.(df))
 

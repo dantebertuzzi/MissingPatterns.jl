@@ -17,5 +17,5 @@ for col in names(df)
 end
 
 # Visualizando os padrões de missing
-plotmissing(df, orientation=:vertical, tick_step=1000)  # Vertical
+plotmissing(df, orientation=:horizontal, tick_step=1000)  # Vertical
 
