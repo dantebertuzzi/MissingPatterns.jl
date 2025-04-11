@@ -1,7 +1,7 @@
 name = "MissingPatterns"
 uuid = "41be38da-c9ad-4b24-9b1b-21c83f144a15"
 authors = ["Dante Bertuzzi"]
-version = "0.1.0"
+version = "0.1.1"
 
 [deps]
 Plots = "91a5bcdd-55d7-5caf-9e0b-520d859cae80"
