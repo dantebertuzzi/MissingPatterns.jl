@@ -2,6 +2,7 @@ module MissingPatterns
 
 using Printf
 using Statistics
+using DataFrames
 
 export plotmissing
 
@@ -80,6 +81,12 @@ function plotmissing(df; char_missing::Char='█', char_present::Char='░', cha
     missing_values = Matrix{Bool}(ismissing.(df))
     nrows, ncols = size(missing_values)
     colnames = names(df)
+    
+    # Verifica se o DataFrame está vazio
+    if nrows == 0 || ncols == 0
+        println("DataFrame vazio - nada para exibir")
+        return nothing
+    end
     
     # Determina se precisa comprimir
     needs_compression = nrows > max_rows || ncols > max_cols

@@ -5,17 +5,16 @@ version = "0.1.2"
 
 [deps]
 Statistics = "10745b16-79ce-11e8-11f9-7d13ad32a3b2"
-Registrator = "4418983a-e44d-11e8-3aec-9789530b3b3e"
-Test = "8dfed614-e22c-5e08-85e1-65c5234f0b40"
+DataFrames = "a93c6f00-e57d-5684-b7b6-d8193f3e46c0"
 
 [compat]
 Statistics = "1"
-Registrator = "1.9.4"
-Test = "1.11.0"
+DataFrames = "1"
 julia = "1"
 
 [extras]
 Test = "8dfed614-e22c-5e08-85e1-65c5234f0b40"
+DataFrames = "a93c6f00-e57d-5684-b7b6-d8193f3e46c0"
 
 [targets]
-test = ["Test"]
+test = ["Test", "DataFrames"]
