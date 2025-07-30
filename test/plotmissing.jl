@@ -1,21 +1,28 @@
 using DataFrames
-using MissingPatterns
-using Random
+include("MissingPatterns.jl")
 
-# Configuração para reproduzibilidade
-Random.seed!(123)
+# Teste pequeno para referência
+df = DataFrame(
+    A = [1, missing, 3, 4, missing],
+    B = [missing, 2, 3, missing, 5],
+    C = [1, 2, missing, 4, 5]
+)
 
-# Criando um DataFrame com 10.000 linhas e 5 colunas
-n_rows = 10_000
-n_cols = 5
-df = DataFrame(rand(n_rows, n_cols), :auto)
+# ...existing code...
 
-# Adicionando valores ausentes aleatoriamente (20% de missing)
-for col in names(df)
-    df[!, col] = allowmissing(df[!, col])
-    df[rand(1:n_rows, Int(round(0.2 * n_rows))), col] .= missing
+# ...existing code...
+
+# Teste grande: 200 linhas x 10 colunas, missing aleatório, nomes de colunas grandes
+println("\nTeste extra (200 linhas x 10 colunas, nomes grandes):")
+nrows, ncols = 200000, 10
+colnames = ["ColunaMuitoLonga_$(i)" for i in 1:ncols]  # nomes grandes
+data = [rand() < 0.2 ? missing : rand(1:100) for _ in 1:nrows, _ in 1:ncols]
+
+# Deixe a última coluna sem missing
+for i in 1:nrows
+    data[i, end] = rand(1:100)
 end
 
-# Visualizando os padrões de missing
-plotmissing(df, orientation=:horizontal, tick_step=1000)  # Vertical
+df_big = DataFrame([data[:,i] for i in 1:ncols], Symbol.(colnames))
 
+MissingPatterns.plotmissing(df_big)

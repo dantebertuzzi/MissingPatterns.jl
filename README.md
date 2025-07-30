@@ -24,31 +24,56 @@ using MissingPatterns
 # Create a sample DataFrame with missing values
 df = DataFrame(A = [1, 2, missing, 4], B = [missing, 2, 3, 4], C = [1, missing, missing, 4])
 
-# Plot missing patterns in vertical orientation
-plotmissing(df, orientation=:vertical)
-
-# Plot missing patterns in horizontal orientation
-plotmissing(df, orientation=:horizontal)
+# Plot missing patterns
+plotmissing(df)
 ```
 
-#### Customizing the Plot
+### Advanced Example with Large Datasets
+
+```julia
+# For large datasets (20k+ rows), the package automatically compresses the visualization
+# and provides enhanced sensitivity for detecting missing patterns
+
+# Create a large dataset
+using Random
+Random.seed!(123)
+
+nrows, ncols = 20000, 10
+data = [rand() < 0.2 ? missing : rand(1:100) for _ in 1:nrows, _ in 1:ncols]
+df_large = DataFrame(data, Symbol.(["Col_$i" for i in 1:ncols]))
+
+# The visualization will show compression info and enhanced sensitivity
+plotmissing(df_large)
+```
+
+### Customizing the Plot
+
 You can customize the appearance of the plot using various keyword arguments:
 
-- `plot_size`: Tuple specifying the size of the plot (default: (1000, 800)).
+- `char_missing`: Character for missing values (default: `'█'`)
+- `char_present`: Character for present values (default: `'░'`)
+- `char_width`: Width of characters for display (default: `5`)
+- `max_rows`: Maximum number of rows to display (default: `50`)
+- `max_cols`: Maximum number of columns to display (default: `20`)
 
-- `orientation`: Symbol (`:vertical` or `:horizontal`) to set the orientation of the plot (default: `:vertical`).
+### Enhanced Sensitivity for Large Datasets
 
-- `dpi`: Integer specifying the resolution of the plot (default: 100).
+For datasets with more than 50 rows, the package automatically compresses the visualization and provides enhanced sensitivity:
 
-- `color_missing`: Color for missing values (default: `:grey10`).
+- **`·`** (dot): 1-5% missing values
+- **`░`** (light square): 5-15% missing values  
+- **`▒`** (medium square): 15-30% missing values
+- **`▓`** (dark square): 30-50% missing values
+- **`█`** (full square): 50%+ missing values
 
-- `color_present`: Color for non-missing values (default: `:white`).
+### Features
 
-- `line_color`: Color for grid lines (default: `:white`).
-
-- `line_width`: Width of grid lines (default: 1).
-
-- `tick_step`: Step size for ticks on the axes (default: 5).
+- **Automatic compression** for large datasets
+- **Enhanced sensitivity** to detect subtle missing patterns
+- **Comprehensive statistics** including row/column analysis
+- **Visual progress bar** showing missing vs present data
+- **Pattern analysis** identifying complete/empty rows and columns
+- **Terminal-based visualization** - no external dependencies
 
 [![Stable](https://img.shields.io/badge/docs-stable-blue.svg)](https://dantebertuzzi.github.io/MissingPatterns.jl/stable)
 [![Dev](https://img.shields.io/badge/docs-dev-blue.svg)](https://dantebertuzzi.github.io/MissingPatterns.jl/dev)

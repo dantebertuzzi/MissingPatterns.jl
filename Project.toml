@@ -1,15 +1,15 @@
 name = "MissingPatterns"
 uuid = "41be38da-c9ad-4b24-9b1b-21c83f144a15"
 authors = ["Dante Bertuzzi"]
-version = "0.1.1"
+version = "0.1.2"
 
 [deps]
-Plots = "91a5bcdd-55d7-5caf-9e0b-520d859cae80"
+Statistics = "10745b16-79ce-11e8-11f9-7d13ad32a3b2"
 Registrator = "4418983a-e44d-11e8-3aec-9789530b3b3e"
 Test = "8dfed614-e22c-5e08-85e1-65c5234f0b40"
 
 [compat]
-Plots = "1.40.9"
+Statistics = "1"
 Registrator = "1.9.4"
 Test = "1.11.0"
 julia = "1"
