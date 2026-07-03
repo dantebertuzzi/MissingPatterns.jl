@@ -1,13 +1,14 @@
 using MissingPatterns
 using Documenter
+import Documenter.Remotes
 
 DocMeta.setdocmeta!(MissingPatterns, :DocTestSetup, :(using MissingPatterns); recursive=true)
 
 makedocs(;
     modules=[MissingPatterns],
     authors="Dante Bertuzzi",
-    repo="https://github.com/dantebertuzzi/MissingPatterns.jl/blob/{commit}{path}#{line}",
     sitename="MissingPatterns.jl",
+    repo=Remotes.GitHub("dantebertuzzi", "MissingPatterns.jl"),
     format=Documenter.HTML(;
         prettyurls=get(ENV, "CI", "false") == "true",
         canonical="https://dantebertuzzi.github.io/MissingPatterns.jl",
@@ -20,4 +21,5 @@ makedocs(;
 
 deploydocs(;
     repo="github.com/dantebertuzzi/MissingPatterns.jl",
+    push_preview=true,
 )
