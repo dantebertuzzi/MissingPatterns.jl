@@ -70,10 +70,10 @@ For datasets with more than 50 rows, the package automatically compresses the vi
 
 - **Automatic compression** for large datasets
 - **Enhanced sensitivity** to detect subtle missing patterns
-- **Comprehensive statistics** including row/column analysis
 - **Visual progress bar** showing missing vs present data
-- **Pattern analysis** identifying complete/empty rows and columns
 - **Terminal-based visualization** - no external dependencies
+- **IO-customizable output** — render to any `IO` (stdout, files, IOBuffer)
+- **TTY-aware ANSI coloring** — colors enabled only in interactive terminals
 
 [![Stable](https://img.shields.io/badge/docs-stable-blue.svg)](https://dantebertuzzi.github.io/MissingPatterns.jl/stable)
 [![Dev](https://img.shields.io/badge/docs-dev-blue.svg)](https://dantebertuzzi.github.io/MissingPatterns.jl/dev)

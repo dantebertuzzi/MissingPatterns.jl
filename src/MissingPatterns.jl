@@ -1,3 +1,11 @@
+"""
+    MissingPatterns
+
+A terminal-based text heatmap for visualizing missing data patterns in DataFrames,
+with zero plotting-library dependencies.
+
+Only `plotmissing` is exported. See its docstring for usage.
+"""
 module MissingPatterns
 
 using Printf
@@ -6,252 +14,281 @@ using DataFrames
 
 export plotmissing
 
-"""
-plotmissing(df; char_missing='█', char_present='░', char_width=5, max_rows=50, max_cols=20)
+function _validate_params(cell_chars, name_width, max_rows, max_cols)
+    cell_chars > 0  || throw(ArgumentError("cell_chars must be positive, got $cell_chars"))
+    cell_chars <= 80 || throw(ArgumentError("cell_chars too large (max 80), got $cell_chars"))
+    name_width >= 0  || throw(ArgumentError("name_width must be >= 0, got $name_width"))
+    max_rows > 0   || throw(ArgumentError("max_rows must be positive, got $max_rows"))
+    max_cols > 0   || throw(ArgumentError("max_cols must be positive, got $max_cols"))
+    nothing
+end
 
-Exibe no terminal um "heatmap" textual mostrando padrões de valores faltantes em um DataFrame.
-Se o dataset for maior que os limites, agrupa múltiplas linhas/colunas em uma única célula.
+function _use_color(io::IO)
+    isa(io, Base.TTY) && return true
+    get(io, :color, false) == true && return true
+    return false
+end
 
-# Argumentos
-- `df`: DataFrame de entrada.
-- `char_missing`: Caractere para valores faltantes.
-- `char_present`: Caractere para valores presentes.
-- `char_width`: Largura do caractere para exibição.
-- `max_rows`: Número máximo de linhas a exibir (padrão: 50).
-- `max_cols`: Número máximo de colunas a exibir (padrão: 20).
+function _compress_data(data::Matrix{Bool}, target_rows::Int, target_cols::Int)
+    orig_rows, orig_cols = size(data)
+    rows_per_cell = ceil(Int, orig_rows / target_rows)
+    cols_per_cell = ceil(Int, orig_cols / target_cols)
 
-# Retorno
-- Nada. O plot é impresso no terminal.
-"""
-function plotmissing(df; char_missing::Char='█', char_present::Char='░', char_width::Int=5, max_rows::Int=50, max_cols::Int=20)
-    
-    # Função para agrupar dados em blocos
-    function compress_data(data::Matrix{Bool}, target_rows::Int, target_cols::Int)
-        orig_rows, orig_cols = size(data)
-        
-        # Calcula quantas linhas/colunas originais cada célula representa
-        rows_per_cell = ceil(Int, orig_rows / target_rows)
-        cols_per_cell = ceil(Int, orig_cols / target_cols)
-        
-        # Calcula o tamanho final da matriz comprimida
-        compressed_rows = ceil(Int, orig_rows / rows_per_cell)
-        compressed_cols = ceil(Int, orig_cols / cols_per_cell)
-        
-        compressed = Matrix{Float64}(undef, compressed_rows, compressed_cols)
-        
-        for i in 1:compressed_rows
-            for j in 1:compressed_cols
-                # Define os índices do bloco original
-                row_start = (i-1) * rows_per_cell + 1
-                row_end = min(i * rows_per_cell, orig_rows)
-                col_start = (j-1) * cols_per_cell + 1
-                col_end = min(j * cols_per_cell, orig_cols)
-                
-                # Calcula a proporção de missing no bloco
-                block = data[row_start:row_end, col_start:col_end]
-                compressed[i,j] = sum(block) / length(block)
-            end
-        end
-        
-        return compressed, rows_per_cell, cols_per_cell
-    end
-    
-    # Função para converter proporção em caractere visual
-    function prop_to_char(prop::Float64, char_missing::Char, char_present::Char)
-        if prop == 0.0
-            return char_present
-        elseif prop == 1.0
-            return char_missing
-        elseif prop <= 0.05
-            return '·'  # Muito poucos missing (1-5%)
-        elseif prop <= 0.15
-            return '░'  # Poucos missing (5-15%)
-        elseif prop <= 0.30
-            return '▒'  # Médio missing (15-30%)
-        elseif prop <= 0.50
-            return '▓'  # Muitos missing (30-50%)
-        elseif prop <= 0.75
-            return '█'  # Muitos missing (50-75%)
-        else
-            return '█'  # Quase todos missing (>75%)
+    cr = ceil(Int, orig_rows / rows_per_cell)
+    cc = ceil(Int, orig_cols / cols_per_cell)
+
+    compressed = Matrix{Float64}(undef, cr, cc)
+
+    for i in 1:cr
+        rs = (i - 1) * rows_per_cell + 1
+        re = min(i * rows_per_cell, orig_rows)
+        for j in 1:cc
+            cs = (j - 1) * cols_per_cell + 1
+            ce = min(j * cols_per_cell, orig_cols)
+            block = data[rs:re, cs:ce]
+            compressed[i, j] = sum(block) / length(block)
         end
     end
-    
-    original_size = size(df)
-    missing_values = Matrix{Bool}(ismissing.(df))
-    nrows, ncols = size(missing_values)
-    colnames = names(df)
-    
-    # Verifica se o DataFrame está vazio
+
+    return compressed, rows_per_cell, cols_per_cell
+end
+
+function _prop_to_char(prop::Float64)
+    prop <= 0.05 && return '·'
+    prop <= 0.15 && return '░'
+    prop <= 0.30 && return '▒'
+    prop <= 0.50 && return '▓'
+    return '█'
+end
+
+function _cell_color(prop::Float64)
+    prop == 0.0 && return ""
+    prop <= 0.05 && return "\033[32m"
+    prop <= 0.15 && return "\033[33m"
+    prop <= 0.30 && return "\033[38;5;214m"
+    prop <= 0.50 && return "\033[38;5;202m"
+    prop <= 0.75 && return "\033[31m"
+    return "\033[38;5;196m"
+end
+
+function _trunc_name(name, width)
+    width == 0 && return name
+    length(name) > width || return name
+    return string(first(name, width), '…')
+end
+
+"""
+    plotmissing([io::IO=stdout], df; cell_chars=5, char_missing='█', char_present='░',
+                name_width=4, color_cells=false, max_rows=50, max_cols=20)
+
+Display a text-based heatmap of missing value patterns in a DataFrame.
+When the dataset exceeds the display limits, multiple rows/columns are grouped
+into a single cell using a Unicode block-character gradient.
+
+# Arguments
+- `io::IO`: output stream (default: `stdout`).
+- `df::AbstractDataFrame`: input DataFrame.
+- `cell_chars::Int`: number of repeated characters per heatmap cell (default: 5, max: 80).
+- `char_missing::Char`: character for fully-missing cells (default: `'█'`).
+- `char_present::Char`: character for fully-present cells (default: `'░'`).
+- `name_width::Int`: max characters shown for column names before truncating with `…`
+  (default: 4; set to 0 to show full names, bounded by cell width).
+- `color_cells::Bool`: apply ANSI color gradient to heatmap cells (green→yellow→red).
+  Only effective when output is a TTY with color support (default: `false`).
+- `max_rows::Int`: maximum display rows before compression (default: 50).
+- `max_cols::Int`: maximum display columns before compression (default: 20).
+
+# Returns
+- `nothing`. The plot is written to `io`.
+"""
+function plotmissing(io::IO, df::AbstractDataFrame; cell_chars::Int=5,
+                     char_missing::Char='█', char_present::Char='░',
+                     name_width::Int=4, color_cells::Bool=false,
+                     max_rows::Int=50, max_cols::Int=20,
+                     char_width::Int=-1)
+
+    if char_width != -1
+        Base.depwarn(
+            "keyword argument `char_width` is deprecated, use `cell_chars` instead.",
+            :plotmissing
+        )
+        cell_chars = char_width
+    end
+
+    _validate_params(cell_chars, name_width, max_rows, max_cols)
+
+    nrows, ncols = size(df)
     if nrows == 0 || ncols == 0
-        println("DataFrame vazio - nada para exibir")
+        println(io, "Empty DataFrame — nothing to display")
         return nothing
     end
-    
-    # Determina se precisa comprimir
-    needs_compression = nrows > max_rows || ncols > max_cols
-    
-    if needs_compression
-        target_rows = min(nrows, max_rows)
-        target_cols = min(ncols, max_cols)
-        
-        compressed_data, rows_per_cell, cols_per_cell = compress_data(missing_values, target_rows, target_cols)
-        display_rows, display_cols = size(compressed_data)
-        
-        # Cria nomes de colunas comprimidos
-        if ncols > max_cols
-            compressed_colnames = String[]
-            for j in 1:display_cols
-                col_start = (j-1) * cols_per_cell + 1
-                col_end = min(j * cols_per_cell, ncols)
-                if col_start == col_end
-                    push!(compressed_colnames, string(colnames[col_start]))
-                else
-                    push!(compressed_colnames, "$(col_start)-$(col_end)")
-                end
-            end
-        else
-            compressed_colnames = string.(colnames)
-        end
-        
 
+    missing_values = Matrix{Bool}(ismissing.(df))
+    colnames = string.(names(df))
+
+    needs_compression = nrows > max_rows || ncols > max_cols
+
+    if needs_compression
+        tr = min(nrows, max_rows)
+        tc = min(ncols, max_cols)
+        compressed_data, rpc, cpc = _compress_data(missing_values, tr, tc)
+        dr, dc = size(compressed_data)
+
+        compressed_colnames = Vector{String}(undef, dc)
+        for j in 1:dc
+            cs = (j - 1) * cpc + 1
+            ce = min(j * cpc, ncols)
+            compressed_colnames[j] = cs == ce ? colnames[cs] : "$(cs)-$(ce)"
+        end
+        rows_per_cell, cols_per_cell = rpc, cpc
     else
         compressed_data = Float64.(missing_values)
-        display_rows, display_cols = nrows, ncols
-        compressed_colnames = string.(colnames)
+        dr, dc = nrows, ncols
+        compressed_colnames = colnames
         rows_per_cell = cols_per_cell = 1
     end
-    
-    # Calcula largura das colunas (agora com limite de 4 chars + "...")
-    max_display_name = 7  # 4 chars + "..." = máximo 7 caracteres
-    colwidth = max(char_width + 2, max_display_name + 2, 6)
-    
-    # Top border
-    print("┏")
-    print(join([repeat("━", colwidth) for _ in 1:display_cols], "┳"))
-    println("┓")
 
-    # Porcentagem de missing por coluna
-    print("┃")
-    for j in 1:display_cols
+    buf = IOBuffer()
+    cw = max(cell_chars + 2, 9)
+    hbar = repeat("━", cw)
+    c_missing = string(char_missing)
+    c_present = string(char_present)
+
+    use_color = _use_color(io)
+    rst    = use_color ? "\033[0m" : ""
+    blue   = use_color ? "\033[34m" : ""
+    orange = use_color ? "\033[38;5;208m" : ""
+
+    function _hborder(left::Char, sep::Char, right::Char)
+        print(buf, left)
+        for k in 1:dc
+            k > 1 && print(buf, sep)
+            print(buf, hbar)
+        end
+        println(buf, right)
+    end
+
+    function _cell(content::AbstractString, prefix::AbstractString="", suffix::AbstractString="")
+        n = length(content)
+        if n > cw - 2
+            content = first(content, cw - 2)
+            n = cw - 2
+        end
+        pt = cw - n
+        pl = div(pt, 2)
+        print(buf, repeat(" ", pl), prefix, content, suffix, repeat(" ", pt - pl))
+    end
+
+    _hborder('┏', '┳', '┓')
+
+    print(buf, '┃')
+    for j in 1:dc
         if needs_compression
-            # Para dados comprimidos, calcula a média das proporções
-            col_start = (j-1) * cols_per_cell + 1
-            col_end = min(j * cols_per_cell, ncols)
-            perc = 100 * mean([count(missing_values[:,k]) / nrows for k in col_start:col_end])
+            cs = (j - 1) * cols_per_cell + 1
+            ce = min(j * cols_per_cell, ncols)
+            perc = 100 * sum(missing_values[:, cs:ce]) / (nrows * (ce - cs + 1))
         else
-            perc = 100 * mean(compressed_data[:,j])
+            perc = 100 * sum(compressed_data[:, j]) / nrows
         end
-        
-        perc_str = @sprintf("%3d%%", round(Int, perc))
-        pad_total = colwidth - length(perc_str)
-        pad_left = div(pad_total, 2)
-        pad_right = pad_total - pad_left
-        print(repeat(" ", pad_left), perc_str, repeat(" ", pad_right))
-        print("┃")
+        _cell(@sprintf("%3d%%", round(Int, perc)))
+        print(buf, '┃')
     end
-    println()
+    println(buf)
 
-    # Header separator
-    print("┣")
-    print(join([repeat("━", colwidth) for _ in 1:display_cols], "╋"))
-    println("┫")
+    _hborder('┣', '╋', '┫')
 
-    # Cabeçalho das colunas
-    print("┃")
-    for j in 1:display_cols
-        name = compressed_colnames[j]
-        
-        # Limita nome a 4 caracteres + "..." se necessário
-        if length(name) > 4
-            display_name = name[1:4] * "..."
-        else
-            display_name = name
-        end
-        
-        # Garante que não exceda a largura da coluna
-        if length(display_name) > colwidth - 2
-            display_name = display_name[1:colwidth-2]
-        end
-        
-        pad_total = colwidth - length(display_name)
-        pad_left = div(pad_total, 2)
-        pad_right = pad_total - pad_left
-        print(repeat(" ", pad_left), display_name, repeat(" ", pad_right))
-        print("┃")
+    print(buf, '┃')
+    for j in 1:dc
+        disp = _trunc_name(compressed_colnames[j], name_width)
+        _cell(disp)
+        print(buf, '┃')
     end
-    println()
+    println(buf)
 
-    # Middle separator
-    print("┣")
-    print(join([repeat("━", colwidth) for _ in 1:display_cols], "╋"))
-    println("┫")
+    _hborder('┣', '╋', '┫')
 
-    # Linhas do heatmap
-    for i in 1:display_rows
-        print("┃")
-        for j in 1:display_cols
+    cell_color_on = color_cells && use_color
+
+    for i in 1:dr
+        print(buf, '┃')
+        for j in 1:dc
             if needs_compression
-                cellchar = repeat(prop_to_char(compressed_data[i,j], char_missing, char_present), char_width)
+                prop = compressed_data[i, j]
+                if prop == 0.0
+                    cellchar = repeat(c_present, cell_chars)
+                elseif prop == 1.0
+                    cellchar = repeat(c_missing, cell_chars)
+                else
+                    cellchar = repeat(string(_prop_to_char(prop)), cell_chars)
+                end
+                prefix = cell_color_on ? _cell_color(prop) : ""
+                suffix = cell_color_on && prefix != "" ? rst : ""
             else
-                cellchar = repeat(compressed_data[i,j] == 1.0 ? char_missing : char_present, char_width)
+                is_missing = compressed_data[i, j] == 1.0
+                cellchar = repeat(is_missing ? c_missing : c_present, cell_chars)
+                if cell_color_on
+                    prefix = is_missing ? "\033[31m" : ""
+                    suffix = is_missing ? rst : ""
+                else
+                    prefix = ""
+                    suffix = ""
+                end
             end
-            
-            pad_total = colwidth - length(cellchar)
-            pad_left = div(pad_total, 2)
-            pad_right = pad_total - pad_left
-            print(repeat(" ", pad_left), cellchar, repeat(" ", pad_right))
-            print("┃")
+            _cell(cellchar, prefix, suffix)
+            print(buf, '┃')
         end
-        println()
+        println(buf)
     end
 
-    # Bottom border
-    print("┗")
-    print(join([repeat("━", colwidth) for _ in 1:display_cols], "┻"))
-    println("┛")
+    _hborder('┗', '┻', '┛')
 
-    # Summary estatístico no estilo BenchmarkTools
-    total_cells = original_size[1] * original_size[2]
-    missing_count = sum(Matrix{Bool}(ismissing.(df)))
+    missing_count = sum(missing_values)
+    total_cells = nrows * ncols
     present_count = total_cells - missing_count
     missing_pct = 100 * missing_count / total_cells
     present_pct = 100 - missing_pct
-    
-    # Códigos de cor ANSI
-    blue = "\033[34m"
-    orange = "\033[38;5;208m"
-    reset = "\033[0m"
-    
-    println()
-    println("MissingPatterns.Analysis: $(blue)$(original_size[1])$(reset) × $(blue)$(original_size[2])$(reset) DataFrame")
-    
+
+    println(buf)
+    println(buf, "MissingPatterns.Analysis: ", blue, nrows, rst, " × ", blue, ncols, rst, " DataFrame")
+
     if needs_compression
-        println(" Compression: $(blue)$(original_size[1])$(reset)×$(blue)$(original_size[2])$(reset) → $(blue)$(display_rows)$(reset)×$(blue)$(display_cols)$(reset) cells  ┊ Ratio: $(blue)$(rows_per_cell)$(reset)×$(blue)$(cols_per_cell)$(reset) per cell")
-        if rows_per_cell > 100
-            println(" Sensitivity: Enhanced for large datasets (·=1-5%, ░=5-15%, ▒=15-30%, ▓=30-50%, █=50%+)")
-        end
+        println(buf, " Compression: ", blue, nrows, rst, "×", blue, ncols, rst,
+                " → ", blue, dr, rst, "×", blue, dc, rst,
+                " cells  ┊ Ratio: ", blue, rows_per_cell, rst, "×", blue, cols_per_cell, rst, " per cell")
     else
-        println(" Compression: No compression needed                    ┊ Ratio: $(blue)1$(reset)×$(blue)1$(reset) per cell")
+        println(buf, " Compression: No compression needed                    ┊ Ratio: ",
+                blue, "1", rst, "×", blue, "1", rst, " per cell")
     end
-    
-    println(" Missing (count):  $(lpad("$(blue)$(missing_count)$(reset)", 18))               ┊ Missing ($(orange)%$(reset)):  $(lpad("$(blue)$(@sprintf("%.2f", missing_pct))$(reset)$(orange)%$(reset)", 16))")
-    println(" Present (count):  $(lpad("$(blue)$(present_count)$(reset)", 18))               ┊ Present ($(orange)%$(reset)):  $(lpad("$(blue)$(@sprintf("%.2f", present_pct))$(reset)$(orange)%$(reset)", 16))")
-    
-    # Barra de progresso visual
-    bar_width = 40
-    missing_bars = round(Int, bar_width * missing_pct / 100)
-    present_bars = bar_width - missing_bars
-    
-    print(" Progress Bar:     ")
-    print("$(blue)[$(reset)")
-    if missing_bars > 0
-        print("$(orange)$(repeat("█", missing_bars))$(reset)")
+
+    mc_str = lpad(string(missing_count), 14)
+    pc_str = lpad(string(present_count), 14)
+    mp_str = lpad(@sprintf("%.2f", missing_pct), 13)
+    pp_str = lpad(@sprintf("%.2f", present_pct), 13)
+
+    println(buf, " Missing (count):  ", blue, mc_str, rst,
+            "               ┊ Missing (", orange, '%', rst, "):  ",
+            blue, mp_str, rst, orange, '%', rst)
+    println(buf, " Present (count):  ", blue, pc_str, rst,
+            "               ┊ Present (", orange, '%', rst, "):  ",
+            blue, pp_str, rst, orange, '%', rst)
+
+    tw = try
+        displaysize(io)[2]
+    catch
+        80
     end
-    if present_bars > 0
-        print("$(blue)$(repeat("█", present_bars))$(reset)")
-    end
-    println("$(blue)]$(reset)")
+    bw = clamp(tw - 22, 20, 120)
+    mb = round(Int, bw * missing_pct / 100)
+    pb = bw - mb
+    print(buf, " Progress Bar:     ", blue, '[', rst)
+    mb > 0 && print(buf, orange, repeat("█", mb), rst)
+    pb > 0 && print(buf, blue, repeat("█", pb), rst)
+    println(buf, blue, ']', rst)
+
+    print(io, String(take!(buf)))
+    return nothing
 end
 
-end # module
+plotmissing(df::AbstractDataFrame; kwargs...) = plotmissing(stdout, df; kwargs...)
+
+end

@@ -157,7 +157,7 @@ version = "0.1.2"
 [[deps.MissingPatterns]]
 path = ".."
 uuid = "41be38da-c9ad-4b24-9b1b-21c83f144a15"
-version = "0.1.0"
+version = "0.1.2"
 
 [[deps.MbedTLS_jll]]
 deps = ["Artifacts", "Libdl"]
