@@ -75,7 +75,8 @@ For datasets with more than 50 rows, the package automatically compresses the vi
 - **IO-customizable output** — render to any `IO` (stdout, files, IOBuffer)
 - **TTY-aware ANSI coloring** — colors enabled only in interactive terminals
 
-[![Stable](https://img.shields.io/badge/docs-stable-blue.svg)](https://dantebertuzzi.github.io/MissingPatterns.jl/stable)
-[![Dev](https://img.shields.io/badge/docs-dev-blue.svg)](https://dantebertuzzi.github.io/MissingPatterns.jl/dev)
-[![Build Status](https://github.com/dantebertuzzi/MissingPatterns.jl/workflows/CI/badge.svg)](https://github.com/dantebertuzzi/MissingPatterns.jl/actions)
-[![Coverage](https://codecov.io/gh/dantebertuzzi/MissingPatterns.jl/branch/master/graph/badge.svg)](https://codecov.io/gh/dantebertuzzi/MissingPatterns.jl)
+[![Stable Docs](https://img.shields.io/badge/docs-stable-blue.svg)](https://dantebertuzzi.github.io/MissingPatterns.jl/stable)
+[![Dev Docs](https://img.shields.io/badge/docs-dev-blue.svg)](https://dantebertuzzi.github.io/MissingPatterns.jl/dev)
+[![Build Status](https://github.com/dantebertuzzi/MissingPatterns.jl/actions/workflows/CI.yml/badge.svg)](https://github.com/dantebertuzzi/MissingPatterns.jl/actions)
+[![Coverage](https://codecov.io/gh/dantebertuzzi/MissingPatterns.jl/branch/main/graph/badge.svg)](https://codecov.io/gh/dantebertuzzi/MissingPatterns.jl)
+[![JuliaHub](https://img.shields.io/badge/dynamic/json?url=https%3A%2F%2Fjuliahub.com%2Fapi%2Fv2%2Fpackages%2FMissingPatterns%2Fversion&query=version&label=version&color=green)](https://juliahub.com/ui/Packages/MissingPatterns/41be38da)
