@@ -48,13 +48,53 @@ plotmissing(df_large)
 
 ### Customizing the Plot
 
-You can customize the appearance of the plot using various keyword arguments:
+You can customize the appearance using keyword arguments:
 
-- `char_missing`: Character for missing values (default: `'█'`)
-- `char_present`: Character for present values (default: `'░'`)
-- `char_width`: Width of characters for display (default: `5`)
-- `max_rows`: Maximum number of rows to display (default: `50`)
-- `max_cols`: Maximum number of columns to display (default: `20`)
+| Argument | Default | Description |
+|---|---|---|
+| `cell_chars` | `5` | Repeated characters per cell (max: 80) |
+| `char_missing` | `'█'` | Character for fully-missing cells |
+| `char_present` | `'░'` | Character for fully-present cells |
+| `name_width` | `4` | Max chars for column names before truncation (`0` = full) |
+| `color_cells` | `false` | ANSI color gradient green→yellow→red |
+| `show_row_range` | `false` | Display original row numbers/ranges on the left |
+| `max_rows` | `50` | Max display rows before compression |
+| `max_cols` | `20` | Max display columns before compression |
+
+#### Row Ranges
+
+```julia
+# Show which original rows each display cell represents
+plotmissing(df; show_row_range=true)
+```
+
+#### ANSI Colors
+
+```julia
+# Color cells by missing proportion (green → yellow → red)
+plotmissing(df; color_cells=true)
+```
+
+#### Custom Characters & Width
+
+```julia
+plotmissing(df; char_missing='X', char_present='.')
+plotmissing(df; cell_chars=3, name_width=8)
+```
+
+#### Redirecting Output
+
+```julia
+# Write to a file
+open("report.txt", "w") do f
+    plotmissing(f, df)
+end
+
+# Capture to string
+io = IOBuffer()
+plotmissing(io, df)
+report = String(take!(io))
+```
 
 ### Enhanced Sensitivity for Large Datasets
 
