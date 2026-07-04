@@ -98,6 +98,23 @@ plotmissing(df; color_cells=true)  # green→yellow→red per missing proportion
 plotmissing(df; max_rows=20, max_cols=10, cell_chars=3)
 ```
 
+## Missing Data Patterns
+
+`plotmissing` shows *where*/*how much* is missing. `missingpatterns` shows
+*which combinations* of columns tend to be missing together — the same
+diagnostic as R's `mice::md.pattern()`. Patterns are sorted most-frequent first.
+
+```julia
+df = DataFrame(
+    A = [1, missing, 3, missing, 5, 6, 7, missing],
+    B = [missing, 2, 3, missing, 5, 6, 7, missing],
+    C = [1, 2, 3, 4, missing, 6, 7, 8],
+)
+
+missingpatterns(df)             # top 20 patterns by default
+missingpatterns(df; max_patterns=5, color_cells=true)
+```
+
 ## API Reference
 
 ```@autodocs

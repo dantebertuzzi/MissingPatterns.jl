@@ -5,6 +5,43 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.2.0] - 2026-07-04
+
+### Added
+- `missingpatterns([io], df; max_patterns=20, ...)`: displays the unique
+  row-wise missingness patterns found in a DataFrame, sorted by frequency —
+  i.e. which columns tend to be missing *together* (the same diagnostic as
+  R's `mice::md.pattern()`). Complements `plotmissing`, which shows
+  *where*/*how much* is missing.
+- `compute_missing_stats` and `compute_pattern_stats`: internal (non-exported)
+  pure calculation functions, now decoupled from rendering, that return
+  plain, `@inferred`-testable structs (`MissingGridStats`, `PatternStats`).
+
+### Changed
+- Internal architecture split into two independently testable stages:
+  calculation (DataFrame → stats struct, no IO) and rendering (stats → IO,
+  no data-shape logic). No change to `plotmissing`'s public behavior.
+- Missing-value scanning no longer materializes an `nrows × ncols` matrix;
+  it accumulates directly into display-sized blocks in a single pass per
+  column, bounded by `max_rows × max_cols` regardless of DataFrame size.
+- Per-cell rendering writes characters directly to the output buffer instead
+  of building and discarding temporary `String`s (`repeat(...)` calls) —
+  substantially fewer allocations on large/wide DataFrames.
+- Removed the unused `Statistics` dependency.
+
+### Fixed
+- Fully-missing cells now always use the same color regardless of whether
+  the display was compressed (previously inconsistent: solid red when
+  uncompressed vs. gradient red when compressed).
+
+### Development note
+This release (refactor + `missingpatterns` feature) was developed with the
+assistance of a generative AI coding tool, used as a pair-programming aid.
+All generated code was reviewed, benchmarked against the previous
+implementation for correctness and performance, and tested by the
+maintainer before release, per the Julia community's request for upfront
+disclosure of AI-assisted contributions.
+
 ## [0.1.3] - 2025-07-03
 
 ### Added

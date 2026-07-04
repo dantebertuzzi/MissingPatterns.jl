@@ -111,9 +111,46 @@ For datasets with more than 50 rows, the package automatically compresses the vi
 - **Automatic compression** for large datasets
 - **Enhanced sensitivity** to detect subtle missing patterns
 - **Visual progress bar** showing missing vs present data
+- **Pattern detection** — `missingpatterns` shows which columns go missing *together*
 - **Terminal-based visualization** - no external dependencies
 - **IO-customizable output** — render to any `IO` (stdout, files, IOBuffer)
 - **TTY-aware ANSI coloring** — colors enabled only in interactive terminals
+
+## Missing Data Patterns
+
+While `plotmissing` shows *where*/*how much* is missing, `missingpatterns` shows
+*which combinations* of columns tend to be missing together — the same
+diagnostic produced by R's `mice::md.pattern()`. This is useful for reasoning
+about the missingness mechanism (columns that are always missing together are
+rarely MCAR) and for choosing an imputation strategy.
+
+```julia
+df = DataFrame(
+    A = [1, missing, 3, missing, 5, 6, 7, missing],
+    B = [missing, 2, 3, missing, 5, 6, 7, missing],
+    C = [1, 2, 3, 4, missing, 6, 7, 8],
+)
+
+missingpatterns(df)
+```
+
+```
+┏━━━━━━━━━┳━━━━━━━━━┳━━━━━━━━━┳━━━━━━━━━┳━━━━━━━━━┓
+┃    A    ┃    B    ┃    C    ┃    n    ┃    %    ┃
+┣━━━━━━━━━╋━━━━━━━━━╋━━━━━━━━━╋━━━━━━━━━╋━━━━━━━━━┫
+┃  ░░░░░  ┃  ░░░░░  ┃  ░░░░░  ┃    3    ┃  37.5%  ┃
+┃  █████  ┃  █████  ┃  ░░░░░  ┃    2    ┃  25.0%  ┃
+┃  ░░░░░  ┃  █████  ┃  ░░░░░  ┃    1    ┃  12.5%  ┃
+┃  █████  ┃  ░░░░░  ┃  ░░░░░  ┃    1    ┃  12.5%  ┃
+┃  ░░░░░  ┃  ░░░░░  ┃  █████  ┃    1    ┃  12.5%  ┃
+┗━━━━━━━━━┻━━━━━━━━━┻━━━━━━━━━┻━━━━━━━━━┻━━━━━━━━━┛
+
+ 5 unique patterns across 8 rows
+```
+
+Patterns are sorted most-frequent first. `max_patterns` (default `20`) caps how
+many rows are displayed; `cell_chars`, `char_missing`, `char_present`,
+`name_width` and `color_cells` behave exactly as in `plotmissing`.
 
 [![Stable Docs](https://img.shields.io/badge/docs-stable-blue.svg)](https://dantebertuzzi.github.io/MissingPatterns.jl/stable)
 [![Dev Docs](https://img.shields.io/badge/docs-dev-blue.svg)](https://dantebertuzzi.github.io/MissingPatterns.jl/dev)

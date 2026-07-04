@@ -293,4 +293,138 @@ using DataFrames
         @test occursin('░', result)
     end
 
+    @testset "missingpatterns" begin
+
+        @testset "basic functionality" begin
+            df = DataFrame(A = [1, missing, 3], B = [missing, 5, 6], C = [7, 8, missing])
+            io = IOBuffer()
+            @test nothing === missingpatterns(io, df)
+            output = String(take!(io))
+            @test occursin('┏', output)
+            @test occursin('┓', output)
+            @test occursin('┗', output)
+            @test occursin('┛', output)
+            @test occursin("unique pattern", output)
+        end
+
+        @testset "default IO is stdout" begin
+            df = DataFrame(A = [1, missing, 3], B = [missing, 5, 6])
+            @test nothing === missingpatterns(df)
+        end
+
+        @testset "empty DataFrame" begin
+            io = IOBuffer()
+            @test nothing === missingpatterns(io, DataFrame(A = Int[], B = String[]))
+            @test occursin("nothing to display", String(take!(io)))
+
+            io2 = IOBuffer()
+            @test nothing === missingpatterns(io2, DataFrame())
+            @test occursin("nothing to display", String(take!(io2)))
+        end
+
+        @testset "no missing values -> single pattern" begin
+            df = DataFrame(A = [1, 2, 3], B = [4, 5, 6])
+            io = IOBuffer()
+            missingpatterns(io, df)
+            output = String(take!(io))
+            @test occursin("1 unique pattern across 3 rows", output)
+            @test occursin("100.0%", output)
+            @test occursin('░', output)
+            @test !occursin('█', output)
+        end
+
+        @testset "all missing values -> single pattern" begin
+            df = DataFrame(A = [missing, missing], B = [missing, missing])
+            io = IOBuffer()
+            missingpatterns(io, df)
+            output = String(take!(io))
+            @test occursin("1 unique pattern across 2 rows", output)
+            @test occursin("100.0%", output)
+        end
+
+        @testset "singular row wording" begin
+            df = DataFrame(A = [1], B = [missing])
+            io = IOBuffer()
+            missingpatterns(io, df)
+            output = String(take!(io))
+            @test occursin("1 unique pattern across 1 row", output)
+            @test !occursin("1 rows", output)
+        end
+
+        @testset "identifies columns missing together" begin
+            # A and B are always missing together; C is independent.
+            df = DataFrame(
+                A = [1, missing, 3, missing, 5, 6],
+                B = [1, missing, 3, missing, 5, 6],
+                C = [missing, 2, 3, 4, missing, 6],
+            )
+            stats = MissingPatterns.compute_pattern_stats(df)
+            @test sum(stats.counts) == 6
+            @test issorted(stats.counts; rev = true)
+            for i in eachindex(stats.counts)
+                @test stats.pattern_missing[i, 1] == stats.pattern_missing[i, 2]
+            end
+        end
+
+        @testset "max_patterns truncation" begin
+            df = DataFrame([Symbol("c$i") => [rand() < 0.5 ? missing : 1 for _ in 1:50]
+                            for i in 1:6])
+            io = IOBuffer()
+            missingpatterns(io, df; max_patterns=2)
+            output = String(take!(io))
+            @test occursin("showing top 2", output)
+            @test occursin("more not shown", output)
+
+            @test_throws ArgumentError missingpatterns(df; max_patterns=0)
+            @test_throws ArgumentError missingpatterns(df; max_patterns=-1)
+        end
+
+        @testset "parameter validation shared with plotmissing" begin
+            df = DataFrame(A = [1, 2], B = [3, 4])
+            @test_throws ArgumentError missingpatterns(df; cell_chars=0)
+            @test_throws ArgumentError missingpatterns(df; cell_chars=81)
+            @test_throws ArgumentError missingpatterns(df; name_width=-1)
+        end
+
+        @testset "custom characters and color_cells accepted" begin
+            df = DataFrame(A = [1, missing], B = [missing, 2])
+            io = IOBuffer()
+            @test nothing === missingpatterns(io, df; char_missing='X', char_present='.',
+                                               color_cells=true)
+            output = String(take!(io))
+            @test occursin('X', output)
+            @test occursin('.', output)
+        end
+
+        @testset "compute_pattern_stats is pure and type-stable" begin
+            df = DataFrame(A = [1, missing, 3], B = [missing, 5, 6])
+            stats = @inferred MissingPatterns.compute_pattern_stats(df)
+            @test stats.nrows == 3
+            @test stats.ncols == 2
+            @test sum(stats.counts) == 3
+            @test size(stats.pattern_missing, 2) == 2
+        end
+
+        @testset "wide DataFrame (>64 columns) fallback path" begin
+            n = 40
+            ncols = 70
+            df = DataFrame([Symbol("c$i") => [rand() < 0.2 ? missing : 1 for _ in 1:n]
+                            for i in 1:ncols])
+            stats = MissingPatterns.compute_pattern_stats(df)
+            @test sum(stats.counts) == n
+            @test size(stats.pattern_missing) == (length(stats.counts), ncols)
+
+            io = IOBuffer()
+            @test nothing === missingpatterns(io, df; max_patterns=5)
+            @test occursin("unique pattern", String(take!(io)))
+        end
+
+        @testset "type stability of public entrypoint" begin
+            df = DataFrame(A = [1, missing], B = [missing, 2])
+            result = @inferred missingpatterns(IOBuffer(), df)
+            @test result === nothing
+        end
+
+    end
+
 end
