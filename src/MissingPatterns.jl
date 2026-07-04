@@ -79,7 +79,7 @@ end
 
 """
     plotmissing([io::IO=stdout], df; cell_chars=5, char_missing='█', char_present='░',
-                name_width=4, color_cells=false, max_rows=50, max_cols=20)
+                name_width=4, color_cells=false, show_row_range=false, max_rows=50, max_cols=20)
 
 Display a text-based heatmap of missing value patterns in a DataFrame.
 When the dataset exceeds the display limits, multiple rows/columns are grouped
@@ -95,6 +95,8 @@ into a single cell using a Unicode block-character gradient.
   (default: 4; set to 0 to show full names, bounded by cell width).
 - `color_cells::Bool`: apply ANSI color gradient to heatmap cells (green→yellow→red).
   Only effective when output is a TTY with color support (default: `false`).
+- `show_row_range::Bool`: display original row numbers (or row ranges when compressed)
+  in a left-hand column (default: `false`).
 - `max_rows::Int`: maximum display rows before compression (default: 50).
 - `max_cols::Int`: maximum display columns before compression (default: 20).
 
@@ -104,6 +106,7 @@ into a single cell using a Unicode block-character gradient.
 function plotmissing(io::IO, df::AbstractDataFrame; cell_chars::Int=5,
                      char_missing::Char='█', char_present::Char='░',
                      name_width::Int=4, color_cells::Bool=false,
+                     show_row_range::Bool=false,
                      max_rows::Int=50, max_cols::Int=20,
                      char_width::Int=-1)
 
@@ -159,13 +162,37 @@ function plotmissing(io::IO, df::AbstractDataFrame; cell_chars::Int=5,
     blue   = use_color ? "\033[34m" : ""
     orange = use_color ? "\033[38;5;208m" : ""
 
-    function _hborder(left::Char, sep::Char, right::Char)
-        print(buf, left)
+    if show_row_range
+        row_labels = Vector{String}(undef, dr)
+        for i in 1:dr
+            rs = (i - 1) * rows_per_cell + 1
+            re = min(i * rows_per_cell, nrows)
+            row_labels[i] = rs == re ? string(rs) : "$(rs)-$(re)"
+        end
+        rw = max(5, maximum(length, row_labels))
+        row_bar = repeat("━", rw)
+    else
+        rw = 0
+        row_bar = ""
+        row_labels = String[]
+    end
+
+    function _hborder(left_corner::Char, t_junct::Char, right_corner::Char)
+        print(buf, left_corner)
+        if show_row_range
+            print(buf, row_bar, t_junct)
+        end
         for k in 1:dc
-            k > 1 && print(buf, sep)
+            k > 1 && print(buf, t_junct)
             print(buf, hbar)
         end
-        println(buf, right)
+        println(buf, right_corner)
+    end
+
+    function _row_label(text::AbstractString)
+        pad = rw - length(text)
+        pl = div(pad, 2)
+        print(buf, repeat(" ", pl), text, repeat(" ", pad - pl))
     end
 
     function _cell(content::AbstractString, prefix::AbstractString="", suffix::AbstractString="")
@@ -182,6 +209,10 @@ function plotmissing(io::IO, df::AbstractDataFrame; cell_chars::Int=5,
     _hborder('┏', '┳', '┓')
 
     print(buf, '┃')
+    if show_row_range
+        _row_label("")
+        print(buf, '┃')
+    end
     for j in 1:dc
         if needs_compression
             cs = (j - 1) * cols_per_cell + 1
@@ -198,6 +229,10 @@ function plotmissing(io::IO, df::AbstractDataFrame; cell_chars::Int=5,
     _hborder('┣', '╋', '┫')
 
     print(buf, '┃')
+    if show_row_range
+        _row_label("row")
+        print(buf, '┃')
+    end
     for j in 1:dc
         disp = _trunc_name(compressed_colnames[j], name_width)
         _cell(disp)
@@ -211,6 +246,10 @@ function plotmissing(io::IO, df::AbstractDataFrame; cell_chars::Int=5,
 
     for i in 1:dr
         print(buf, '┃')
+        if show_row_range
+            _row_label(row_labels[i])
+            print(buf, '┃')
+        end
         for j in 1:dc
             if needs_compression
                 prop = compressed_data[i, j]
