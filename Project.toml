@@ -1,6 +1,6 @@
 name = "MissingPatterns"
 uuid = "41be38da-c9ad-4b24-9b1b-21c83f144a15"
-version = "0.2.0"
+version = "0.3.0"
 authors = ["Dante Bertuzzi"]
 
 [deps]

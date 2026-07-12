@@ -5,6 +5,38 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.3.0] - 2026-07-11
+
+### Added
+- **Tables.jl migration**: all functions now accept any Tables.jl-compatible source
+  (NamedTuples, CSV.File, row tables, etc.), not just DataFrames.
+- `missingsummary([io], tbl; sortby, bins, color)`: per-column missing-value
+  summary with distribution sparklines.
+- `missingcooccurrence([io], tbl; method, max_cols, color)`: pairwise correlation
+  (ϕ or Jaccard) of missingness masks between columns.
+- `plotmissingdiff([io], before, after; color)`: side-by-side diff heatmap
+  showing resolved/introduced missing values between two versions of a dataset.
+- `missinghtml([path], tbl; title, emphasis, missing_color)`: HTML heatmap
+  export with inline CSS, suitable for reports and notebooks.
+- `compute_missing_stats_grouped(tbl, by, period)`: temporal grouping by year,
+  quarter, month, week, or day — aggregates rows into period buckets.
+- **Compact layout**: `plotmissing(layout=:compact)` renders a space-efficient
+  grid using half-block characters (▀) with truecolor RGB foreground/background.
+- `layout=:auto`: automatically chooses classic or compact layout based on data
+  size and `target_lines`.
+- `color` / `emphasis` / `missing_color` kwargs: control ANSI/truecolor cell
+  coloring; `emphasis` can highlight `:missing` or `:present` cells.
+- `target_lines` kwarg: sets the maximum number of lines for compact layout.
+- `_PRESENT_RGB`, `ColorRamp`, `_ramp_rgb`, `_blend`: truecolor gradient system
+  for smooth visual transitions, including micro-hole visibility at very low
+  missingness rates.
+
+### Changed
+- **Breaking**: `plotmissing` no longer requires DataFrames.jl; any Tables.jl
+  source is accepted. DataFrames.jl moved to test-only dependency.
+- Compact layout uses truecolor RGB escape codes for half-block rendering.
+- Progress bar adapts to terminal width via `displaysize`.
+
 ## [0.2.0] - 2026-07-04
 
 ### Added
