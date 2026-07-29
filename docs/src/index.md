@@ -48,9 +48,9 @@ plotmissing(tbl; name_width=6)
 
 | Kwarg | Default | Description |
 |---|---|---|
-| `layout` | `:classic` | `:classic`, `:compact` (half-block), or `:auto` |
+| `layout` | `:auto` | `:classic`, `:compact` (half-block), or `:auto` |
 | `color` | `:auto` | `:always`, `:never`, or `:auto` (TTY detection) |
-| `emphasis` | `:missing` | `:missing` or `:present` — which cells get color |
+| `emphasis` | `:present` | `:missing` or `:present` — which cells get color |
 | `missing_color` | `"#f3a9a9"` | Hex color for missing cells |
 | `target_lines` | `28` | Max lines for compact layout |
 | `max_rows` | `50` | Display rows before compression |
