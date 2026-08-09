@@ -1057,7 +1057,7 @@ end
                 max_rows=50, max_cols=20,
                 layout=:auto, target_lines=28, color=:auto,
                 missing_color="#f3a9a9", emphasis=:present,
-                by=nothing, period=:year)
+                by=nothing, period=nothing)
 
 Display a text-based heatmap of missing value patterns in any
 Tables.jl-compatible source (DataFrame, `CSV.File`, NamedTuple of vectors,
@@ -1078,15 +1078,19 @@ grouped into a single cell using a Unicode block-character gradient
 - `:auto` (default) — uses `:classic` when it fits within `target_lines`,
   `:compact` otherwise.
 
-# Temporal grouping
-- `by::Union{Nothing,Symbol,String}`: name of a `Date`/`DateTime` column.
-  When set, rows are grouped by the *values* of that column (not by
-  position), so the vertical axis becomes honest calendar time and row
-  labels show periods (e.g. `2004`, `2013-Q2`). Rows whose `by` value is
-  `missing` form a trailing `∅` group. Row labels are always shown in this
-  mode. If there are more periods than fit the budget, consecutive periods
-  are merged and labeled as ranges.
-- `period::Symbol`: `:year` (default), `:quarter`, `:month`, `:week`, `:day`.
+# Grouping
+- `by::Union{Nothing,Symbol,String}`: name of a column. When set, rows are
+  grouped by the *values* of that column (not by position), so the vertical
+  axis becomes honest categories/calendar time instead of arbitrary row
+  ranges. Rows whose `by` value is `missing` form a trailing `∅` group. Row
+  labels are always shown in this mode. If there are more groups than fit
+  the budget, consecutive groups (in sorted order) are merged and labeled
+  as ranges (e.g. `2004-2005`, `A-C`).
+- `period::Union{Symbol,Nothing}`: `nothing` (default) groups by the `by`
+  column's exact value — categorical grouping, works for any sortable
+  column (`String`, `Symbol`, `Int`, ...). Set to `:year`, `:quarter`,
+  `:month`, `:week` or `:day` to instead group by that calendar period of a
+  `Date`/`DateTime` `by` column.
 
 # Arguments
 - `io::IO`: output stream (default: `stdout`).
@@ -1133,7 +1137,7 @@ function plotmissing(io::IO, tbl; cell_chars::Int=5,
                      color::Symbol=:auto, missing_color::String="#f3a9a9",
                      emphasis::Symbol=:present,
                      by::Union{Nothing,Symbol,AbstractString}=nothing,
-                     period::Symbol=:year,
+                     period::Union{Symbol,Nothing}=nothing,
                      char_width::Int=-1)
 
     if char_width != -1
@@ -1345,6 +1349,14 @@ _period_label(::Nothing, ::Val)                   = _MISSING_GROUP_LABEL
 # tight Union-typed key vector without per-element dynamic dispatch.
 @inline _row_period_keys(col::AbstractVector, pv::Val) = [_period_key(x, pv) for x in col]
 
+# Categorical grouping (period === nothing): the group key is the column
+# value itself — no calendar bucketing, just "group identical values
+# together" — sorted with the same `∅`-for-missing convention as periods.
+_category_label(k) = string(k)
+_category_label(::Nothing) = _MISSING_GROUP_LABEL
+
+@inline _row_category_keys(col::AbstractVector) = [ismissing(x) ? nothing : x for x in col]
+
 """
     _accumulate_column_grouped!(group_counts, col, gids) -> Int
 
@@ -1366,17 +1378,25 @@ loop specializes on the column's concrete eltype.
 end
 
 """
-    compute_missing_stats_grouped(tbl, by, period; max_rows, max_cols) -> MissingGridStats
+    compute_missing_stats_grouped(tbl, by, period=nothing; max_rows, max_cols) -> MissingGridStats
 
-Like [`compute_missing_stats`](@ref), but rows are grouped by the calendar
-`period` of the `by` column's values instead of by position. Groups are
-sorted chronologically; rows with a `missing` date form a trailing `∅`
-group. When there are more periods than `max_rows`, *consecutive* periods
-are merged into one block and labeled as a range (e.g. `2004-2005`), with
-proportions weighted by each period's true row count — so unequal-sized
-periods never distort the picture.
+Like [`compute_missing_stats`](@ref), but rows are grouped by the `by`
+column's values instead of by position. Two modes:
+
+- `period` is `:year`, `:quarter`, `:month`, `:week` or `:day`: `by` must
+  hold `Date`/`DateTime` values, and rows are grouped by the calendar
+  period they fall in (groups sorted chronologically).
+- `period === nothing` (default): `by` is treated as a categorical column —
+  rows are grouped by exact value (groups sorted with `isless`, so any
+  `Real`, `AbstractString`, `Symbol`, etc. column works).
+
+In both modes, rows with a `missing` `by` value form a trailing `∅` group.
+When there are more groups than `max_rows`, *consecutive* groups (in sorted
+order) are merged into one block and labeled as a range (e.g. `2004-2005`
+for periods, `A-C` for categories), with proportions weighted by each
+group's true row count — so unequal-sized groups never distort the picture.
 """
-function compute_missing_stats_grouped(tbl, by, period::Symbol;
+function compute_missing_stats_grouped(tbl, by, period::Union{Symbol,Nothing}=nothing;
                                         max_rows::Int, max_cols::Int)
     return _compute_missing_stats_grouped(_table_info(tbl)..., by, period; max_rows, max_cols)
 end
@@ -1384,22 +1404,27 @@ end
 # Kernel taking an already-resolved `_table_info` tuple — see
 # `_compute_missing_stats` for why callers may already have one in hand.
 function _compute_missing_stats_grouped(cols, src_colnames::Vector{String},
-                                         nrows::Int, ncols::Int, by, period::Symbol;
+                                         nrows::Int, ncols::Int, by,
+                                         period::Union{Symbol,Nothing};
                                          max_rows::Int, max_cols::Int)
-    period in (:year, :quarter, :month, :week, :day) ||
-        throw(ArgumentError("period must be :year, :quarter, :month, :week or :day, got :$period"))
+    period === nothing || period in (:year, :quarter, :month, :week, :day) ||
+        throw(ArgumentError("period must be :year, :quarter, :month, :week, :day, " *
+                             "or nothing (categorical grouping), got :$period"))
     byname = String(by)
     bidx = findfirst(==(byname), src_colnames)
     bidx === nothing && throw(ArgumentError(
         "`by` column \"$byname\" not found; available: $(join(src_colnames, ", "))"))
 
-    pv = Val(period)
-    rowkeys = _row_period_keys(Tables.getcolumn(cols, bidx), pv)
+    bycol = Tables.getcolumn(cols, bidx)
+    rowkeys = period === nothing ? _row_category_keys(bycol) :
+                                    _row_period_keys(bycol, Val(period))
+    label(k) = period === nothing ? _category_label(k) : _period_label(k, Val(period))
 
     # `rowkeys`'s eltype is `Union{K,Nothing}` for the concrete key type `K`
-    # of this period (e.g. `Int` for `:year`, `Tuple{Int,Int}` for `:month`).
-    # Keying `gid`/`ordered` on that same concrete union (rather than `Any`)
-    # keeps the per-row group lookup below allocation-free and dispatch-free.
+    # (the `by` column's own eltype in categorical mode, or the period's key
+    # type in temporal mode). Keying `gid`/`ordered` on that same concrete
+    # union (rather than `Any`) keeps the per-row group lookup below
+    # allocation-free and dispatch-free.
     present_keys = sort!(unique(k for k in rowkeys if k !== nothing))
     KeyT = Union{eltype(present_keys),Nothing}
     ordered = Vector{KeyT}(present_keys)
@@ -1455,8 +1480,8 @@ function _compute_missing_stats_grouped(cols, src_colnames::Vector{String},
         @inbounds for g in gs:ge
             rows_in += gsize[g]
         end
-        row_lo[ir] = _period_label(ordered[gs], pv)
-        row_hi[ir] = _period_label(ordered[ge], pv)
+        row_lo[ir] = label(ordered[gs])
+        row_hi[ir] = label(ordered[ge])
         row_labels[ir] = row_lo[ir] == row_hi[ir] ? row_lo[ir] :
                          string(row_lo[ir], "-", row_hi[ir])
         for jc in 1:dc
@@ -1472,7 +1497,8 @@ function _compute_missing_stats_grouped(cols, src_colnames::Vector{String},
     end
 
     needs_compression = groups_per_cell > 1 || cols_per_cell > 1
-    group_desc = string("by ", byname, " (", period, ")")
+    group_desc = period === nothing ? string("by ", byname) :
+                                       string("by ", byname, " (", period, ")")
 
     # rows_per_cell = 0 signals "rows are value-grouped, not positional".
     return MissingGridStats(nrows, ncols, dr, dc, 0, cols_per_cell,

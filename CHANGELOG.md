@@ -7,7 +7,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+- **Categorical grouping**: `plotmissing`/`compute_missing_stats_grouped`'s
+  `by` kwarg now also accepts non-temporal columns. With `period=nothing`
+  (the new default), rows are grouped by the `by` column's exact value —
+  sorted with `isless`, so any `String`, `Symbol`, `Int`, etc. column works —
+  instead of requiring a `Date`/`DateTime` column and a calendar `period`.
+  Existing temporal grouping (`period=:year`/`:quarter`/`:month`/`:week`/`:day`)
+  is unchanged.
+
 ### Changed
+- **Possibly breaking**: `plotmissing`'s `period` keyword default changed
+  from `:year` to `nothing`. Only affects callers that pass `by=` without
+  also passing `period=`; every documented usage already passed both.
 - `compute_missing_stats_grouped` now keys its internal row-grouping
   `Dict`/`Vector` on the period's concrete `Union{K,Nothing}` type instead of
   `Any`, avoiding per-row boxing/dynamic dispatch in the grouping loop.

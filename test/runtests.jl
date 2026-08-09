@@ -813,6 +813,50 @@ end
     end
 
     # =========================================================================
+    # categorical grouping (period === nothing)
+    # =========================================================================
+    @testset "categorical grouping" begin
+        cats = ["north", "south", "north", "east", "south", "east", "north", missing]
+        vals = [1, missing, 3, missing, 5, missing, 7, 8]
+        tbl = (region = cats, v = vals)
+
+        # default `period` (omitted) is categorical
+        s = compute_missing_stats_grouped(tbl, :region; max_rows=50, max_cols=20)
+        @test s.row_labels == ["east", "north", "south", "∅"]
+        @test s.group_desc == "by region"
+        jv = findfirst(==("v"), s.colnames)
+        je = findfirst(==("east"), s.row_labels)
+        @test s.proportions[je, jv] ≈ 1.0   # both east rows missing v
+        jn = findfirst(==("north"), s.row_labels)
+        @test s.proportions[jn, jv] ≈ 0.0   # both north rows present
+
+        # explicit `period=nothing` is equivalent
+        s2 = compute_missing_stats_grouped(tbl, :region, nothing;
+                                            max_rows=50, max_cols=20)
+        @test s2.row_labels == s.row_labels
+
+        out = rendered(plotmissing, tbl; by=:region, color=:never)
+        @test occursin("north", out) && occursin("south", out) && occursin("east", out)
+        @test occursin("by region", out) && !occursin("by region (", out)
+
+        # works for any sortable, non-Date eltype (Int here)
+        si = compute_missing_stats_grouped((g=[3, 1, 2, 1, missing], v=[1, missing, 3, 4, 5]),
+                                            :g; max_rows=50, max_cols=20)
+        @test si.row_labels == ["1", "2", "3", "∅"]
+
+        # compression: many categories collapse into max_rows consecutive ranges
+        many = (cat = [string("c", lpad(i, 2, '0')) for i in 1:30],
+                v = [i % 3 == 0 ? missing : i for i in 1:30])
+        sc = compute_missing_stats_grouped(many, :cat; max_rows=5, max_cols=20)
+        @test sc.dr <= 5
+        @test sc.needs_compression
+        @test occursin('-', sc.row_labels[1])
+
+        @test_throws ArgumentError compute_missing_stats_grouped(tbl, :nope;
+                                                                  max_rows=50, max_cols=20)
+    end
+
+    # =========================================================================
     # Argument validation
     # =========================================================================
     @testset "argument validation" begin

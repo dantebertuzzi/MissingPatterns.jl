@@ -78,8 +78,8 @@ plotmissing(tbl; show_row_range=true)           # show original row ranges
 | `name_width` | `4` | Column-name max chars before truncating (`0` = full name) |
 | `color_cells` | `false` | Apply the color ramp to classic-layout glyphs |
 | `show_row_range` | `false` | Show row-range (or period) labels on the left |
-| `by` | `nothing` | Name of a `Date`/`DateTime` column — group rows by calendar period instead of position |
-| `period` | `:year` | `:year`, `:quarter`, `:month`, `:week`, or `:day` (used with `by`) |
+| `by` | `nothing` | Name of a column — group rows by category or calendar period instead of position |
+| `period` | `nothing` | `nothing` (categorical grouping by `by`'s exact value), or `:year`, `:quarter`, `:month`, `:week`, `:day` for a `Date`/`DateTime` `by` column |
 
 #### Layouts
 
@@ -87,23 +87,32 @@ plotmissing(tbl; show_row_range=true)           # show original row ranges
 - **`:compact`** — fits the *entire* plot in at most `target_lines` lines, so IDE/Jupyter output cells never truncate it. With color available, each output line encodes **two** grid rows via `▀` (foreground = top row, background = bottom row), doubling vertical resolution.
 - **`:auto`** (default) — uses `:classic` when it fits within `target_lines`, `:compact` otherwise.
 
-#### Temporal grouping
+#### Grouping by category or by time
 
 ```julia
-using Dates
-tbl = (date = [Date(2023,1,15), Date(2024,6,1), Date(2024,6,2)],
-       v    = [1, missing, 3])
+# categorical grouping (period=nothing, the default): groups by exact value
+tbl = (region = ["north", "south", "north", "east"], v = [1, missing, 3, missing])
+plotmissing(tbl; by=:region)
 
-plotmissing(tbl; by=:date, period=:year)
-plotmissing(tbl; by=:date, period=:quarter)
-plotmissing(tbl; by=:date, period=:month)
-plotmissing(tbl; by=:date, period=:week)
-plotmissing(tbl; by=:date, period=:day)
+# temporal grouping: groups by calendar period of a Date/DateTime column
+using Dates
+tbl2 = (date = [Date(2023,1,15), Date(2024,6,1), Date(2024,6,2)],
+        v    = [1, missing, 3])
+
+plotmissing(tbl2; by=:date, period=:year)
+plotmissing(tbl2; by=:date, period=:quarter)
+plotmissing(tbl2; by=:date, period=:month)
+plotmissing(tbl2; by=:date, period=:week)
+plotmissing(tbl2; by=:date, period=:day)
 ```
 
 Rows are grouped by the *values* of the `by` column (not by position), so the
-vertical axis becomes honest calendar time and row labels show periods (e.g.
-`2004`, `2013-Q2`). Rows whose `by` value is `missing` form a trailing `∅` group.
+vertical axis becomes honest categories or calendar time instead of arbitrary
+row ranges. With `period=nothing` (default), groups are the column's exact
+values, sorted — works for any sortable column (`String`, `Symbol`, `Int`,
+...). With `period` set to a calendar unit, groups are periods of a
+`Date`/`DateTime` column (e.g. `2004`, `2013-Q2`). Rows whose `by` value is
+`missing` form a trailing `∅` group either way.
 
 ### `missingpatterns` — Unique missingness patterns
 
@@ -273,7 +282,7 @@ plotmissing(CSV.File("data.csv"))
 - **Tables.jl-native** — works with any compatible source, not just DataFrames
 - **Automatic compression** for large datasets, with enhanced sensitivity to subtle patterns
 - **Compact half-block layout** with truecolor gradients for IDE/Jupyter output cells
-- **Temporal grouping** by calendar year/quarter/month/week/day
+- **Grouping** by category (any sortable column) or by calendar year/quarter/month/week/day
 - **Pattern detection** (`missingpatterns`) and **pairwise correlation** (`missingcooccurrence`) of missingness
 - **Before/after diffing** (`plotmissingdiff`) for auditing imputation steps
 - **HTML export** (`missinghtml`) for reports and notebooks

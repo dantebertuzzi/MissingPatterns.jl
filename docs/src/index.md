@@ -60,20 +60,29 @@ plotmissing(tbl; name_width=6)
 | `char_present` | `░` | Character for fully present cells |
 | `name_width` | `4` | Column-name max chars (`0` = full name) |
 | `show_row_range` | `false` | Show row-number labels |
+| `by` | `nothing` | Name of a column — group rows by category or calendar period instead of position |
+| `period` | `nothing` | `nothing` (categorical grouping by `by`'s exact value), or `:year`, `:quarter`, `:month`, `:week`, `:day` for a `Date`/`DateTime` `by` column |
 
-#### Temporal grouping
+#### Grouping by category or by time
 
 ```julia
-using Dates
-tbl = (date = [Date(2023,1,15), Date(2024,6,1), Date(2024,6,2)],
-       v    = [1, missing, 3])
+# categorical grouping (period=nothing, the default): groups by exact value
+tbl = (region = ["north", "south", "north", "east"], v = [1, missing, 3, missing])
+plotmissing(tbl; by=:region)
 
-plotmissing(tbl; by=:date, period=:year)
-plotmissing(tbl; by=:date, period=:quarter)
-plotmissing(tbl; by=:date, period=:month)
-plotmissing(tbl; by=:date, period=:week)
-plotmissing(tbl; by=:date, period=:day)
+# temporal grouping: groups by calendar period of a Date/DateTime column
+using Dates
+tbl2 = (date = [Date(2023,1,15), Date(2024,6,1), Date(2024,6,2)],
+        v    = [1, missing, 3])
+
+plotmissing(tbl2; by=:date, period=:year)
+plotmissing(tbl2; by=:date, period=:quarter)
+plotmissing(tbl2; by=:date, period=:month)
+plotmissing(tbl2; by=:date, period=:week)
+plotmissing(tbl2; by=:date, period=:day)
 ```
+
+Rows whose `by` value is `missing` form a trailing `∅` group in either mode.
 
 ### `missingpatterns` — Unique missingness patterns
 
