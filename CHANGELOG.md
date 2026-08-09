@@ -5,6 +5,32 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Changed
+- `compute_missing_stats_grouped` now keys its internal row-grouping
+  `Dict`/`Vector` on the period's concrete `Union{K,Nothing}` type instead of
+  `Any`, avoiding per-row boxing/dynamic dispatch in the grouping loop.
+- `compute_cooccurrence` computes only the upper triangle of its symmetric
+  `n11`/`M` matrices and mirrors the result, instead of doing the full
+  `ncols × ncols` work twice.
+- `plotmissing` no longer resolves the table's columns twice when
+  `layout=:auto` is combined with `by`.
+- Internal cell-rendering helpers deduplicated (`_colored_cell!` merged into
+  `_cell!`; the repeated "color prefix/suffix only if color is on" logic
+  factored into one helper). No behavior change.
+
+### Fixed
+- `_pattern_keys_general` (the `>64`-column fallback used internally by
+  `compute_pattern_stats`/`compute_cooccurrence`) no longer allocates an
+  intermediate `BitMatrix` and copies it out row by row.
+- `Project.toml`: declared the missing `Dates` compat bound.
+
+### Development note
+Test coverage extended for the `by` + `layout=:compact` interaction, the
+wide-table (`>64` columns) fallback path of `compute_cooccurrence`, and
+`@inferred` checks on the pure calculation functions.
+
 ## [0.3.0] - 2026-07-11
 
 ### Added
