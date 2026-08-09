@@ -231,7 +231,7 @@ version = "0.1.2"
 deps = ["CSV", "Dates", "PrecompileTools", "Printf", "Tables"]
 path = "/home/dantebertuzzi/Documentos/my-projects/julia/packages/MissingPatterns.jl"
 uuid = "41be38da-c9ad-4b24-9b1b-21c83f144a15"
-version = "0.3.0"
+version = "0.4.0"
 
 [[deps.Mmap]]
 uuid = "a63ad114-7e13-5084-954f-fe012c677804"
