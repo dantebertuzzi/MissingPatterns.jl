@@ -540,6 +540,35 @@ end
     end
 
     # =========================================================================
+    # temporal grouping combined with compact layout
+    # =========================================================================
+    @testset "temporal grouping with compact layout" begin
+        dates = vcat(fill(Date(2020, 1, 1), 6), fill(Date(2021, 1, 1), 6),
+                     fill(Date(2022, 1, 1), 6))
+        vals = [i % 4 == 0 ? missing : i for i in 1:length(dates)]
+        tbl = (date = dates, v = vals)
+
+        # force :compact via a tiny target_lines budget
+        out = rendered(plotmissing, tbl; by=:date, period=:year, layout=:compact,
+                       target_lines=_COMPACT_OVERHEAD + 3, color=:never)
+        @test occursin("by date (year)", out)
+        @test occursin("2020", out) && occursin("2021", out) && occursin("2022", out)
+
+        # halfblock path (color forced on) exercises the row-label pair rebuild
+        out_c = rendered(plotmissing, tbl; by=:date, period=:year, layout=:compact,
+                         target_lines=_COMPACT_OVERHEAD + 3, color=:always,
+                         show_row_range=true)
+        @test occursin('▀', out_c)
+
+        # layout=:auto also resolving to :compact when data doesn't fit
+        many_years = (date = [Date(2000 + y, 1, 1) for y in 1:40 for _ in 1:2],
+                      v = [i % 3 == 0 ? missing : i for i in 1:80])
+        out_auto = rendered(plotmissing, many_years; by=:date, period=:year,
+                            layout=:auto, target_lines=20, color=:never)
+        @test occursin("by date (year)", out_auto)
+    end
+
+    # =========================================================================
     # compute_cooccurrence
     # =========================================================================
     @testset "cooccurrence" begin
@@ -557,6 +586,22 @@ end
         @test isnan(M2[1, 2])
 
         @test_throws ArgumentError compute_cooccurrence(tbl; method=:tau)
+
+        # wide (>64 cols) fallback path, shared with compute_pattern_stats
+        symmetric_or_nan(M) = all(isnan(M[a, b]) == isnan(M[b, a]) &&
+                                   (isnan(M[a, b]) || M[a, b] ≈ M[b, a])
+                                   for a in axes(M, 1), b in axes(M, 2))
+
+        wide = bigtable(50, 70; miss_every=5)
+        Mw, namesw, n1w, nw = compute_cooccurrence(wide; method=:phi)
+        @test size(Mw) == (70, 70)
+        @test nw == 50
+        @test length(namesw) == 70
+        @test symmetric_or_nan(Mw)
+
+        MwJ, _, _, _ = compute_cooccurrence(wide; method=:jaccard)
+        @test size(MwJ) == (70, 70)
+        @test symmetric_or_nan(MwJ)
     end
 
     # =========================================================================
@@ -579,6 +624,30 @@ end
 
         @test nothing === missingcooccurrence(IOBuffer(), tbl; color=:always)
         @test nothing === missingcooccurrence(tbl)
+    end
+
+    # =========================================================================
+    # Type stability of the pure calculation functions
+    # =========================================================================
+    @testset "@inferred calculation functions" begin
+        tbl = (A = [1, missing, 3], B = [missing, 5, 6])
+
+        @test (@inferred compute_missing_stats(tbl; max_rows=50, max_cols=20)) isa
+              MissingPatterns.MissingGridStats
+        @test (@inferred compute_pattern_stats(tbl)) isa MissingPatterns.PatternStats
+        @test (@inferred compute_cooccurrence(tbl; method=:phi)) isa Tuple
+        @test (@inferred compute_cooccurrence(tbl; method=:jaccard)) isa Tuple
+
+        dates = (date = [Date(2024, 1, 1), Date(2024, 6, 1), missing],
+                 v = [1, missing, 3])
+        @test (@inferred compute_missing_stats_grouped(dates, :date, :year;
+                                                        max_rows=50, max_cols=20)) isa
+              MissingPatterns.MissingGridStats
+
+        # wide (>64 cols) fallback path must also stay inferrable
+        wide = bigtable(30, 70)
+        @test (@inferred compute_pattern_stats(wide)) isa MissingPatterns.PatternStats
+        @test (@inferred compute_cooccurrence(wide; method=:phi)) isa Tuple
     end
 
     # =========================================================================

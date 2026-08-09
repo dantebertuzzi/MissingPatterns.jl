@@ -186,6 +186,22 @@ every cell is colored, since present data is exactly what carries the ink.
     return _fg_rgb(_ramp_rgb(style.ramp, prop))
 end
 
+"""
+    _cell_prefix_suffix(style, prop, color_on) -> (prefix, suffix)
+
+ANSI prefix/suffix pair for a heatmap glyph cell, ready to pass straight into
+`_cell!`/`_data_cell!`. Both are `""` when `color_on` is false, or when
+`_glyph_prefix` itself opts out (e.g. a fully-present cell under `:missing`
+emphasis) — the single place this "no coloring → no prefix/suffix" idiom
+lives, instead of being repeated at every call site.
+"""
+@inline function _cell_prefix_suffix(style, prop::Float64, color_on::Bool)
+    color_on || return "", ""
+    prefix = _glyph_prefix(style, prop)
+    suffix = isempty(prefix) ? "" : style.rst
+    return prefix, suffix
+end
+
 @inline _fg_rgb(c::NTuple{3,Int}) = string("\033[38;2;", c[1], ';', c[2], ';', c[3], 'm')
 @inline _bg_rgb(c::NTuple{3,Int}) = string("\033[48;2;", c[1], ';', c[2], ';', c[3], 'm')
 
@@ -279,7 +295,14 @@ the *display* size (`max_rows × max_cols`), not by the data itself.
 Row-range labels are always built (they are at most `max_rows` tiny strings).
 """
 function compute_missing_stats(tbl; max_rows::Int, max_cols::Int)
-    cols, src_colnames, nrows, ncols = _table_info(tbl)
+    return _compute_missing_stats(_table_info(tbl)...; max_rows, max_cols)
+end
+
+# Kernel taking an already-resolved `_table_info` tuple, so callers that need
+# to resolve dimensions before deciding whether to call this (e.g.
+# `plotmissing`'s `layout=:auto`) don't pay for `Tables.columns(tbl)` twice.
+function _compute_missing_stats(cols, src_colnames::Vector{String}, nrows::Int,
+                                 ncols::Int; max_rows::Int, max_cols::Int)
     needs_compression = nrows > max_rows || ncols > max_cols
 
     rows_per_cell = needs_compression ? cld(nrows, min(nrows, max_rows)) : 1
@@ -393,23 +416,20 @@ function _pattern_keys_fast(cols, nrows::Int, ncols::Int)
     return keys
 end
 
-# General fallback (ncols > 64): bit-packed BitMatrix, then one BitVector
-# view per row for grouping. Same O(nrows*ncols) time as the fast path, just
-# without the single-word packing trick — a deliberate simplicity/performance
-# tradeoff since wide (>64-column) frames are a rare case for this package.
-@inline function _fill_missing_bits!(dest::AbstractVector{Bool}, col::AbstractVector)
-    @inbounds for i in eachindex(col)
-        dest[i] = ismissing(col[i])
-    end
-    return nothing
-end
-
+# General fallback (ncols > 64): one BitVector per row, filled column by
+# column directly (no intermediate BitMatrix + per-row copy-out). Same
+# O(nrows*ncols) time as the fast path, just without the single-word packing
+# trick — a deliberate simplicity/performance tradeoff since wide (>64-column)
+# frames are a rare case for this package.
 function _pattern_keys_general(cols, nrows::Int, ncols::Int)
-    mask = BitMatrix(undef, nrows, ncols)
+    keys = [falses(ncols) for _ in 1:nrows]
     for j in 1:ncols
-        _fill_missing_bits!(view(mask, :, j), Tables.getcolumn(cols, j))
+        col = Tables.getcolumn(cols, j)
+        @inbounds for i in 1:nrows
+            keys[i][j] = ismissing(col[i])
+        end
     end
-    return [mask[i, :] for i in 1:nrows]
+    return keys
 end
 
 @inline function _unpack_key!(dest::AbstractVector{Bool}, k::UInt64)
@@ -578,7 +598,15 @@ function _row_label!(buf::IO, text::AbstractString, rw::Int)
     return nothing
 end
 
-function _cell!(buf::IO, content::AbstractString, cw::Int)
+"""
+    _cell!(buf, content, cw, prefix="", suffix="")
+
+Center-padded text cell. With `prefix`/`suffix` given, they wrap the content
+as an ANSI escape pair while the padding itself stays uncolored (so
+backgrounds don't bleed into neighboring cells).
+"""
+function _cell!(buf::IO, content::AbstractString, cw::Int,
+                 prefix::String="", suffix::String="")
     n = length(content)
     if n > cw - 2
         content = first(content, cw - 2)
@@ -587,7 +615,9 @@ function _cell!(buf::IO, content::AbstractString, cw::Int)
     pt = cw - n
     pl = div(pt, 2)
     _write_spaces!(buf, pl)
+    isempty(prefix) || write(buf, prefix)
     write(buf, content)
+    isempty(suffix) || write(buf, suffix)
     _write_spaces!(buf, pt - pl)
     return nothing
 end
@@ -659,13 +689,7 @@ function render_grid!(buf::IO, stats::MissingGridStats, style::RenderStyle)
         for j in 1:dc
             prop = stats.proportions[i, j]
             glyph = _cell_glyph(prop, style.char_missing, style.char_present)
-            if cell_color_on
-                prefix = _glyph_prefix(style, prop)
-                suffix = isempty(prefix) ? "" : style.rst
-            else
-                prefix = ""
-                suffix = ""
-            end
+            prefix, suffix = _cell_prefix_suffix(style, prop, cell_color_on)
             _data_cell!(buf, glyph, style.cell_chars, cw, prefix, suffix)
             write(buf, '┃')
         end
@@ -812,13 +836,7 @@ function render_pattern_table!(buf::IO, stats::PatternStats, style::RenderStyle,
         for j in 1:ncols
             prop = stats.pattern_missing[i, j] ? 1.0 : 0.0
             glyph = _cell_glyph(prop, style.char_missing, style.char_present)
-            if cell_color_on
-                prefix = _glyph_prefix(style, prop)
-                suffix = isempty(prefix) ? "" : style.rst
-            else
-                prefix = ""
-                suffix = ""
-            end
+            prefix, suffix = _cell_prefix_suffix(style, prop, cell_color_on)
             _data_cell!(buf, glyph, style.cell_chars, cw, prefix, suffix)
             write(buf, '┃')
         end
@@ -990,13 +1008,7 @@ function render_grid_compact!(buf::IO, stats::MissingGridStats, style::RenderSty
             for j in 1:dc
                 prop = stats.proportions[i, j]
                 glyph = _cell_glyph(prop, style.char_missing, style.char_present)
-                if cell_color_on
-                    prefix = _glyph_prefix(style, prop)
-                    suffix = isempty(prefix) ? "" : style.rst
-                else
-                    prefix = ""
-                    suffix = ""
-                end
+                prefix, suffix = _cell_prefix_suffix(style, prop, cell_color_on)
                 _data_cell!(buf, glyph, style.cell_chars, cw, prefix, suffix)
                 write(buf, '┃')
             end
@@ -1143,7 +1155,7 @@ function plotmissing(io::IO, tbl; cell_chars::Int=5,
     target_lines >= _COMPACT_OVERHEAD + 1 ||
         throw(ArgumentError("target_lines must be at least $(_COMPACT_OVERHEAD + 1), got $target_lines"))
 
-    _, _, nrows, ncols = _table_info(tbl)
+    cols, src_colnames, nrows, ncols = _table_info(tbl)
     if nrows == 0 || ncols == 0
         println(io, "Empty table — nothing to display")
         return nothing
@@ -1156,8 +1168,9 @@ function plotmissing(io::IO, tbl; cell_chars::Int=5,
     use_color = force_color === nothing ? _use_color(io) : force_color
 
     _stats(mr) = by === nothing ?
-        compute_missing_stats(tbl; max_rows=mr, max_cols) :
-        compute_missing_stats_grouped(tbl, by, period; max_rows=mr, max_cols)
+        _compute_missing_stats(cols, src_colnames, nrows, ncols; max_rows=mr, max_cols) :
+        _compute_missing_stats_grouped(cols, src_colnames, nrows, ncols, by, period;
+                                        max_rows=mr, max_cols)
 
     # Resolve :auto — classic fits iff its total height (grid rows + 3-line
     # header + 3 border lines + blank + 6-line summary = dr + 13) is within
@@ -1365,10 +1378,16 @@ periods never distort the picture.
 """
 function compute_missing_stats_grouped(tbl, by, period::Symbol;
                                         max_rows::Int, max_cols::Int)
+    return _compute_missing_stats_grouped(_table_info(tbl)..., by, period; max_rows, max_cols)
+end
+
+# Kernel taking an already-resolved `_table_info` tuple — see
+# `_compute_missing_stats` for why callers may already have one in hand.
+function _compute_missing_stats_grouped(cols, src_colnames::Vector{String},
+                                         nrows::Int, ncols::Int, by, period::Symbol;
+                                         max_rows::Int, max_cols::Int)
     period in (:year, :quarter, :month, :week, :day) ||
         throw(ArgumentError("period must be :year, :quarter, :month, :week or :day, got :$period"))
-
-    cols, src_colnames, nrows, ncols = _table_info(tbl)
     byname = String(by)
     bidx = findfirst(==(byname), src_colnames)
     bidx === nothing && throw(ArgumentError(
@@ -1377,12 +1396,17 @@ function compute_missing_stats_grouped(tbl, by, period::Symbol;
     pv = Val(period)
     rowkeys = _row_period_keys(Tables.getcolumn(cols, bidx), pv)
 
+    # `rowkeys`'s eltype is `Union{K,Nothing}` for the concrete key type `K`
+    # of this period (e.g. `Int` for `:year`, `Tuple{Int,Int}` for `:month`).
+    # Keying `gid`/`ordered` on that same concrete union (rather than `Any`)
+    # keeps the per-row group lookup below allocation-free and dispatch-free.
     present_keys = sort!(unique(k for k in rowkeys if k !== nothing))
-    ordered = Vector{Any}(present_keys)
+    KeyT = Union{eltype(present_keys),Nothing}
+    ordered = Vector{KeyT}(present_keys)
     any(k -> k === nothing, rowkeys) && push!(ordered, nothing)
     ngroups = length(ordered)
 
-    gid = Dict{Any,Int}(k => i for (i, k) in enumerate(ordered))
+    gid = Dict{KeyT,Int}(k => i for (i, k) in enumerate(ordered))
     gids = Vector{Int}(undef, nrows)
     @inbounds for i in 1:nrows
         gids[i] = gid[rowkeys[i]]
@@ -1489,57 +1513,46 @@ function compute_cooccurrence(tbl; method::Symbol=:phi)
     ps = compute_pattern_stats(tbl)
     n, nc = ps.nrows, ps.ncols
 
+    # `n11` is symmetric by construction (co-occurrence of a with b equals b
+    # with a), so both this accumulation and the `M` fill below only visit
+    # the upper triangle (idxs comes out of `findall` sorted ascending) and
+    # mirror into the lower one — half the work for the same result.
     n1 = zeros(Int, nc)
     n11 = zeros(Int, nc, nc)
     for p in eachindex(ps.counts)
         c = ps.counts[p]
         idxs = findall(@view ps.pattern_missing[p, :])
-        for a in idxs
+        for (ii, a) in enumerate(idxs)
             n1[a] += c
-            for b in idxs
+            n11[a, a] += c
+            for jj in (ii + 1):length(idxs)
+                b = idxs[jj]
                 n11[a, b] += c
+                n11[b, a] += c
             end
         end
     end
 
     M = Matrix{Float64}(undef, nc, nc)
-    for a in 1:nc, b in 1:nc
-        if method === :phi
-            na, nb, nab = n1[a], n1[b], n11[a, b]
-            # float early: na*(n-na)*nb*(n-nb) overflows Int64 for n ~ 10^5
-            denom = sqrt(float(na) * (n - na) * nb * (n - nb))
-            M[a, b] = denom == 0 ? NaN :
-                (float(nab) * (n - na - nb + nab) - float(na - nab) * (nb - nab)) / denom
-        else
-            u = n1[a] + n1[b] - n11[a, b]
-            M[a, b] = u == 0 ? NaN : n11[a, b] / u
+    for a in 1:nc
+        na = n1[a]
+        for b in a:nc
+            nb, nab = n1[b], n11[a, b]
+            val = if method === :phi
+                # float early: na*(n-na)*nb*(n-nb) overflows Int64 for n ~ 10^5
+                denom = sqrt(float(na) * (n - na) * nb * (n - nb))
+                denom == 0 ? NaN :
+                    (float(nab) * (n - na - nb + nab) - float(na - nab) * (nb - nab)) / denom
+            else
+                u = na + nb - nab
+                u == 0 ? NaN : nab / u
+            end
+            M[a, b] = val
+            M[b, a] = val
         end
     end
 
     return M, ps.colnames, n1, n
-end
-
-"""
-    _colored_cell!(buf, content, cw, prefix, suffix)
-
-Center-padded text cell like `_cell!`, but with an ANSI prefix/suffix
-wrapping the content (padding stays uncolored so backgrounds don't bleed).
-"""
-function _colored_cell!(buf::IO, content::AbstractString, cw::Int,
-                         prefix::String, suffix::String)
-    n = length(content)
-    if n > cw - 2
-        content = first(content, cw - 2)
-        n = cw - 2
-    end
-    pt = cw - n
-    pl = div(pt, 2)
-    _write_spaces!(buf, pl)
-    isempty(prefix) || write(buf, prefix)
-    write(buf, content)
-    isempty(suffix) || write(buf, suffix)
-    _write_spaces!(buf, pt - pl)
-    return nothing
 end
 
 """
@@ -1619,7 +1632,7 @@ function missingcooccurrence(io::IO, tbl; method::Symbol=:phi, cell_chars::Int=5
                 if style.use_color
                     t = clamp(abs(v), 0.0, 1.0)
                     rgb = _blend(_PRESENT_RGB, style.ramp.target, 0.15 + 0.85 * t)
-                    _colored_cell!(buf, txt, cw, _fg_rgb(rgb), style.rst)
+                    _cell!(buf, txt, cw, _fg_rgb(rgb), style.rst)
                 else
                     _cell!(buf, txt, cw)
                 end
