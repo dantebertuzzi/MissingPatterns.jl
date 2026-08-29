@@ -21,5 +21,6 @@ makedocs(;
 
 deploydocs(;
     repo="github.com/dantebertuzzi/MissingPatterns.jl",
+    devbranch="main",
     push_preview=true,
 )
