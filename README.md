@@ -14,6 +14,7 @@ zero plotting-library dependencies, pure Unicode/ANSI terminal rendering.
 [![Build Status](https://github.com/dantebertuzzi/MissingPatterns.jl/actions/workflows/CI.yml/badge.svg?branch=main)](https://github.com/dantebertuzzi/MissingPatterns.jl/actions/workflows/CI.yml?query=branch%3Amain)
 [![Coverage](https://coveralls.io/repos/github/dantebertuzzi/MissingPatterns.jl/badge.svg?branch=main)](https://coveralls.io/github/dantebertuzzi/MissingPatterns.jl?branch=main)
 [![JuliaHub](https://docs.juliahub.com/General/MissingPatterns/stable/version.svg)](https://juliahub.com/ui/Packages/General/MissingPatterns)
+[![DOI](https://zenodo.org/badge/940293931.svg)](https://zenodo.org/badge/latestdoi/940293931)
 
 ## Installation
 
@@ -380,3 +381,11 @@ plotmissing(CSV.File("data.csv"))
 - **Medium-aware display** (`missingreport`) — terminal in the REPL, HTML in Jupyter/Pluto
 - **IO-customizable output** — render to `stdout`, a file, or an `IOBuffer`
 - **TTY-aware ANSI/truecolor coloring** — colors enabled only where supported
+
+## Citation
+
+Every release is archived on [Zenodo](https://zenodo.org/badge/latestdoi/940293931)
+with its own DOI; the DOI badge above always resolves to the most recent
+version. `CITATION.cff` in this repository holds the machine-readable
+metadata, which is what GitHub's *Cite this repository* button reads and what
+reference managers import.
