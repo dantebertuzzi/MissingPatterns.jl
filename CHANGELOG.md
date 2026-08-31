@@ -8,6 +8,45 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- **Data API** — every view now has a counterpart that *returns* a
+  Tables.jl-compatible row table (`Vector{<:NamedTuple}`) instead of printing,
+  so results can go straight into a `DataFrame`, be filtered, joined or
+  serialized. Until now the package was print-only.
+  - `missingstats(tbl)` — one row per column: `column`, `eltype`, `nmissing`,
+    `npresent`, `nrows`, `pct`.
+  - `missingpatternstats(tbl)` — one row per unique missingness pattern:
+    `pattern` (a `NamedTuple` of `Bool` keyed by column name), `nmissing`,
+    `n`, `pct`. Frequency-ordered, with no `max_patterns`/`min_pct` cap.
+  - `missingpairstats(tbl)` — one row per unordered column pair: `a`, `b`,
+    `phi`, `jaccard`, `n11`, `n1`, `n2`, `nrows`. No `max_cols` cap. Both
+    coefficients are returned rather than selected by a `method` keyword —
+    they fall out of the same counts, so the schema stays fixed.
+  - `missingrowstats(tbl)` — one row per observed missing-count.
+
+  These share the same kernels as the renderers (`compute_pattern_stats`,
+  `_cooccurrence_counts`, `_phi`/`_jaccard`), so a number read through the
+  data API can never disagree with the same number drawn on screen.
+- `missingrows([io], tbl; sortby, bar_width, color, missing_color)` — the
+  transposed view the package was missing: the distribution of *how many*
+  values are missing per row. The `0` line is the complete-case count, and
+  the rest is what listwise deletion (`dropmissing`) would discard.
+  Complements `missingsummary` (per column) and `missingpatterns` (per
+  combination).
+- `missingreport(tbl; kwargs...)` and the `MissingReport` type — an object
+  that renders itself as the terminal heatmap under `MIME"text/plain"` and
+  as the HTML heatmap under `MIME"text/html"`, so the same expression shows
+  Unicode in a REPL and a colored, tooltipped grid in Jupyter/Pluto. It takes
+  the keyword arguments of both `plotmissing` and `missinghtml` and forwards
+  each only to the renderer that accepts it, preserving per-medium defaults;
+  an unknown keyword raises at construction, not at display time.
+
+  A `show` method for `MIME"text/html"` cannot be attached to the caller's
+  table type — defining one for `DataFrame` would be type piracy, which the
+  new Aqua check rejects — hence a type this package owns.
+- `missinghtml` gained the `by`/`period` keywords, grouping rows by a
+  column's values exactly as `plotmissing` does, so a grouped report reads
+  the same in both media. Cell tooltips drop the `rows ` prefix when the
+  labels are categories or calendar periods rather than row ranges.
 - `CITATION.cff` — machine-readable citation metadata, so GitHub renders a
   "Cite this repository" entry and reference managers can import it.
 - `.zenodo.json` — deposition metadata (title, abstract, creators, MIT license,
@@ -24,6 +63,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   its transitive dependencies (Parsers, InlineStrings, SentinelArrays,
   PooledArrays, WeakRefStrings, WorkerUtilities). No behavior change: any
   `CSV.File` still works, since it is consumed through the Tables.jl interface.
+
+### Changed
+- `compute_cooccurrence`'s ϕ/Jaccard arithmetic factored out into `_phi` and
+  `_jaccard`, and its `n1`/`n11` accumulation into `_cooccurrence_counts`, so
+  the renderer and the new `missingpairstats` compute from one shared
+  implementation instead of two copies. No behavior change — verified value
+  for value against the rendered matrix in the test suite.
 
 ### Fixed
 - `Project.toml`: declared the missing `DataFrames` and `Test` compat bounds

@@ -44,7 +44,13 @@ plotmissing(tbl)
 | [`missingsummary`](#missingsummary--per-column-missing-summary) | Per-column counts, % and a distribution sparkline |
 | [`missingcooccurrence`](#missingcooccurrence--pairwise-correlation-of-missingness) | Pairwise ϕ/Jaccard correlation of missingness masks |
 | [`plotmissingdiff`](#plotmissingdiff--beforeafter-comparison) | Before/after diff (e.g. auditing an imputation step) |
+| [`missingrows`](#missingrows--per-row-completeness) | *How many* values are missing per row (what listwise deletion costs) |
 | [`missinghtml`](#missinghtml--html-heatmap-export) | The heatmap as a standalone HTML fragment |
+| [`missingreport`](#missingreport--one-object-two-media) | The heatmap as an object that renders itself in terminal *or* HTML |
+
+Every display above has a data counterpart that returns a
+[Tables.jl](https://github.com/JuliaData/Tables.jl)-compatible row table
+instead of printing — see [Getting the numbers out](#getting-the-numbers-out).
 
 ### `plotmissing` — Missing-value heatmap
 
@@ -197,6 +203,27 @@ plotmissingdiff(before, after)
 plotmissingdiff(before, after; color=:always)
 ```
 
+### `missingrows` — Per-row completeness
+
+The transposed view: not *which* columns are missing, but *how many* values
+are missing in each row. The `0` line is the complete-case count — everything
+below it is what `dropmissing` would throw away.
+
+```julia
+missingrows(tbl)
+missingrows(tbl; sortby=:rows)     # most common shape first (default: :nmissing)
+missingrows(tbl; bar_width=50)
+missingrows(tbl; color=:always)
+```
+
+```
+ missing/row  rows        %  distribution
+ 0               3   37.50%  ██████████████████████████████
+ 1               3   37.50%  ██████████████████████████████
+ 2               2   25.00%  ████████████████████
+ 3 complete rows (37.50%) ┊ 5 with ≥1 missing (62.50%) ┊ 3 distinct counts across 3 columns
+```
+
 ### `missinghtml` — HTML heatmap export
 
 Renders the same heatmap and color ramp as `plotmissing` as a standalone,
@@ -207,8 +234,70 @@ range and exact missing percentage.
 ```julia
 missinghtml(tbl)                                          # returns a String
 missinghtml(tbl; title="My Report", emphasis=:missing, missing_color="#ff0000")
+missinghtml(tbl; by=:region)                              # same grouping as plotmissing
 missinghtml("/path/to/report.html", tbl)                  # writes to a file, returns the path
 ```
+
+### `missingreport` — One object, two media
+
+`missingreport` returns an object that renders itself as the terminal heatmap
+under `MIME"text/plain"` and as the HTML heatmap under `MIME"text/html"`. The
+same expression therefore shows Unicode in a REPL and a colored, tooltipped
+grid in Jupyter or Pluto, with no branching on the caller's side.
+
+```julia
+missingreport(tbl)
+missingreport(tbl; emphasis=:missing, missing_color="#ff6600")
+missingreport(tbl; by=:region)                # grouped in both media
+missingreport(tbl; layout=:compact, title="Cohort A")
+
+show(stdout, MIME"text/html"(), missingreport(tbl))   # force one medium
+```
+
+It accepts the keyword arguments of both `plotmissing` and `missinghtml`, and
+forwards each only to the renderer that takes it — so per-medium defaults (a
+200×60 HTML grid vs a 50×20 terminal grid) survive unless you override them.
+An unknown keyword is an error immediately, not at display time.
+
+`plotmissing` and `missinghtml` are unchanged and remain the direct,
+single-medium entry points.
+
+## Getting the numbers out
+
+Every view has a data counterpart returning a plain
+[Tables.jl](https://github.com/JuliaData/Tables.jl)-compatible row table
+(`Vector{<:NamedTuple}`) — no display compression, no `max_patterns`/`max_cols`
+cap, nothing printed. They share the same kernels as the renderers, so a number
+read here can never disagree with the one drawn on screen.
+
+| Function | One row per | Key fields |
+|---|---|---|
+| `missingstats` | column | `column`, `eltype`, `nmissing`, `npresent`, `nrows`, `pct` |
+| `missingpatternstats` | unique missingness pattern | `pattern` (a `NamedTuple` of `Bool` keyed by column), `nmissing`, `n`, `pct` |
+| `missingpairstats` | unordered pair of columns | `a`, `b`, `phi`, `jaccard`, `n11`, `n1`, `n2`, `nrows` |
+| `missingrowstats` | observed missing-count | `nmissing`, `nrows`, `pct` |
+
+```julia
+using DataFrames
+
+DataFrame(missingstats(df))                        # straight into a DataFrame
+filter(r -> r.pct > 20, missingstats(df))          # columns worse than 20% missing
+
+sort(missingpairstats(df); by = r -> -r.phi)[1:5]  # most co-missing column pairs
+
+ps = missingpatternstats(df)
+filter(r -> r.pattern.age && !r.pattern.income, ps)
+
+rs = missingrowstats(df)
+only(r.nrows for r in rs if r.nmissing == 0)       # complete-case count
+sum(r.nrows for r in rs if r.nmissing > 0)         # rows lost to listwise deletion
+```
+
+`missingpairstats` returns **both** ϕ and Jaccard rather than selecting one
+with a `method` keyword: both fall out of the same `n11`/`n1`/`n2` counts, so
+the schema stays fixed regardless of which you read. Undefined coefficients
+are `NaN` — `phi` whenever a column is entirely missing or entirely present,
+`jaccard` only when neither column has a single missing value.
 
 ## Large Datasets
 
@@ -285,6 +374,9 @@ plotmissing(CSV.File("data.csv"))
 - **Grouping** by category (any sortable column) or by calendar year/quarter/month/week/day
 - **Pattern detection** (`missingpatterns`) and **pairwise correlation** (`missingcooccurrence`) of missingness
 - **Before/after diffing** (`plotmissingdiff`) for auditing imputation steps
+- **Row-completeness distribution** (`missingrows`) — what listwise deletion costs
+- **Tables.jl data API** (`missingstats`, `missingpatternstats`, `missingpairstats`, `missingrowstats`) — every view also available as data
 - **HTML export** (`missinghtml`) for reports and notebooks
+- **Medium-aware display** (`missingreport`) — terminal in the REPL, HTML in Jupyter/Pluto
 - **IO-customizable output** — render to `stdout`, a file, or an `IOBuffer`
 - **TTY-aware ANSI/truecolor coloring** — colors enabled only where supported

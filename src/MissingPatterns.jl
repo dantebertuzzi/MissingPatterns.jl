@@ -25,7 +25,9 @@ using Dates
 using Tables
 
 export plotmissing, missingpatterns, missingcooccurrence, missingsummary,
-       plotmissingdiff, missinghtml
+       plotmissingdiff, missinghtml, missingrows,
+       missingstats, missingpatternstats, missingpairstats, missingrowstats,
+       missingreport
 
 # =============================================================================
 # Validation & small pure helpers
@@ -1538,11 +1540,38 @@ function compute_cooccurrence(tbl; method::Symbol=:phi)
 
     ps = compute_pattern_stats(tbl)
     n, nc = ps.nrows, ps.ncols
+    n1, n11 = _cooccurrence_counts(ps)
 
-    # `n11` is symmetric by construction (co-occurrence of a with b equals b
-    # with a), so both this accumulation and the `M` fill below only visit
-    # the upper triangle (idxs comes out of `findall` sorted ascending) and
-    # mirror into the lower one — half the work for the same result.
+    M = Matrix{Float64}(undef, nc, nc)
+    for a in 1:nc
+        na = n1[a]
+        for b in a:nc
+            nb, nab = n1[b], n11[a, b]
+            val = method === :phi ? _phi(nab, na, nb, n) : _jaccard(nab, na, nb)
+            M[a, b] = val
+            M[b, a] = val
+        end
+    end
+
+    return M, ps.colnames, n1, n
+end
+
+"""
+    _cooccurrence_counts(ps::PatternStats) -> (n1, n11)
+
+Marginal (`n1[a]`: rows where column `a` is missing) and joint
+(`n11[a, b]`: rows where `a` *and* `b` are both missing) missingness counts,
+accumulated from the already-deduplicated pattern table — so the cost is
+`O(npatterns * k^2)` in the number of *distinct* patterns and missing
+columns per pattern, not `O(nrows * ncols^2)`.
+
+`n11` is symmetric by construction (co-occurrence of `a` with `b` equals `b`
+with `a`), so the loop only visits the upper triangle (`idxs` comes out of
+`findall` sorted ascending) and mirrors into the lower one — half the work
+for the same result.
+"""
+function _cooccurrence_counts(ps::PatternStats)
+    nc = ps.ncols
     n1 = zeros(Int, nc)
     n11 = zeros(Int, nc, nc)
     for p in eachindex(ps.counts)
@@ -1558,27 +1587,35 @@ function compute_cooccurrence(tbl; method::Symbol=:phi)
             end
         end
     end
+    return n1, n11
+end
 
-    M = Matrix{Float64}(undef, nc, nc)
-    for a in 1:nc
-        na = n1[a]
-        for b in a:nc
-            nb, nab = n1[b], n11[a, b]
-            val = if method === :phi
-                # float early: na*(n-na)*nb*(n-nb) overflows Int64 for n ~ 10^5
-                denom = sqrt(float(na) * (n - na) * nb * (n - nb))
-                denom == 0 ? NaN :
-                    (float(nab) * (n - na - nb + nab) - float(na - nab) * (nb - nab)) / denom
-            else
-                u = na + nb - nab
-                u == 0 ? NaN : nab / u
-            end
-            M[a, b] = val
-            M[b, a] = val
-        end
-    end
+"""
+    _phi(nab, na, nb, n) -> Float64
 
-    return M, ps.colnames, n1, n
+ϕ (mean square contingency) coefficient of the two binary missingness
+indicators, from the 2x2 table implied by `nab`/`na`/`nb`/`n`. `NaN` when
+either column is entirely missing or entirely present (the denominator
+vanishes — the coefficient is genuinely undefined, not zero).
+
+The products are taken in `Float64`: `na*(n-na)*nb*(n-nb)` overflows `Int64`
+around `n ~ 10^5`, which is an ordinary table size here.
+"""
+@inline function _phi(nab::Int, na::Int, nb::Int, n::Int)
+    denom = sqrt(float(na) * (n - na) * nb * (n - nb))
+    denom == 0 && return NaN
+    return (float(nab) * (n - na - nb + nab) - float(na - nab) * (nb - nab)) / denom
+end
+
+"""
+    _jaccard(nab, na, nb) -> Float64
+
+Jaccard index of the two missingness masks: `|A ∩ B| / |A ∪ B|`. `NaN` when
+neither column has any missing value (empty union).
+"""
+@inline function _jaccard(nab::Int, na::Int, nb::Int)
+    u = na + nb - nab
+    return u == 0 ? NaN : nab / u
 end
 
 """
@@ -1959,7 +1996,8 @@ _css_rgb(c::NTuple{3,Int}) = string("rgb(", c[1], ",", c[2], ",", c[3], ")")
 
 """
     missinghtml(tbl; max_rows=200, max_cols=60, missing_color="#f3a9a9",
-                emphasis=:present, title="Missing data") -> String
+                emphasis=:present, title="Missing data",
+                by=nothing, period=nothing) -> String
     missinghtml(path::AbstractString, tbl; kwargs...) -> path
 
 Render the missing-data heatmap as a standalone HTML fragment (dark-themed
@@ -1970,12 +2008,18 @@ percentage. The same compression engine and color ramp as
 [`plotmissing`](@ref) are used, so the two outputs always agree — HTML just
 affords a much larger grid (defaults: 200×60 blocks).
 
+`by`/`period` group rows by a column's values instead of by position,
+exactly as in [`plotmissing`](@ref), so a grouped report reads the same in
+both media.
+
 The one-argument form returns the HTML `String`; the two-argument form
 writes it to `path` and returns the path.
 """
 function missinghtml(tbl; max_rows::Int=200, max_cols::Int=60,
                       missing_color::String="#f3a9a9", emphasis::Symbol=:present,
-                      title::AbstractString="Missing data")
+                      title::AbstractString="Missing data",
+                      by::Union{Nothing,Symbol,AbstractString}=nothing,
+                      period::Union{Symbol,Nothing}=nothing)
     _validate_display_params(max_rows, max_cols)
     emphasis in (:present, :missing) ||
         throw(ArgumentError("emphasis must be :present or :missing, got :$emphasis"))
@@ -1985,7 +2029,9 @@ function missinghtml(tbl; max_rows::Int=200, max_cols::Int=60,
         return "<div style=\"font-family:monospace\">Empty table — nothing to display</div>"
     end
 
-    stats = compute_missing_stats(tbl; max_rows, max_cols)
+    stats = by === nothing ?
+        compute_missing_stats(tbl; max_rows, max_cols) :
+        compute_missing_stats_grouped(tbl, by, period; max_rows, max_cols)
     ramp = ColorRamp(_PRESENT_RGB, _parse_hex(missing_color), emphasis)
     missing_pct = 100 * stats.missing_count / stats.total_cells
 
@@ -2007,8 +2053,8 @@ function missinghtml(tbl; max_rows::Int=200, max_cols::Int=60,
     end
     for i in 1:stats.dr, j in 1:stats.dc
         p = stats.proportions[i, j]
-        tip = string(_html_escape(stats.colnames[j]), " · rows ",
-                     stats.row_labels[i], " · ",
+        tip = string(_html_escape(stats.colnames[j]), " · ",
+                     by === nothing ? "rows " : "", stats.row_labels[i], " · ",
                      @sprintf("%.2f", 100p), "% missing")
         print(io, "<div style=\"width:14px;height:8px;background:",
               _css_rgb(_ramp_rgb(ramp, p)), "\" title=\"", tip, "\"></div>")
@@ -2030,6 +2076,443 @@ function missinghtml(path::AbstractString, tbl; kwargs...)
     end
     return path
 end
+
+# =============================================================================
+# STAGE 3 — Data API (pure, no IO): table -> Tables.jl-compatible row tables
+#
+# Everything above this point either computes *display* structures (already
+# compressed to a `max_rows × max_cols` grid, carrying row labels and glyph
+# decisions) or renders them. The functions below are the escape hatch: plain,
+# flat, uncompressed row tables that a caller can push straight into a
+# DataFrame, filter, join or serialize. They deliberately share the same
+# kernels as the renderers (`compute_pattern_stats`, `_cooccurrence_counts`,
+# `_phi`/`_jaccard`), so a number read here can never disagree with the same
+# number drawn on screen.
+# =============================================================================
+
+"""
+    _count_missing(col) -> Int
+
+Missing-value tally for one column. Same function-barrier pattern as
+`_accumulate_column!`: the caller pays dynamic dispatch once per *column*,
+and this body specializes on the column's concrete eltype, so the inner loop
+is scalar and allocation-free with no `Union{T,Missing}` boxing.
+"""
+@inline function _count_missing(col::AbstractVector)
+    n = 0
+    @inbounds for i in eachindex(col)
+        n += ismissing(col[i]) ? 1 : 0
+    end
+    return n
+end
+
+"""
+    missingstats(tbl) -> Vector{<:NamedTuple}
+
+Per-column missing-data statistics as a Tables.jl-compatible row table — the
+data behind [`missingsummary`](@ref), without the rendering.
+
+One row per column of `tbl`, in table order, with fields:
+
+- `column::Symbol` — the column's name.
+- `eltype::Type` — the column's element type, `Missing` included
+  (`missingsummary` *displays* `Base.nonmissingtype` of this).
+- `nmissing::Int`, `npresent::Int` — cell counts.
+- `nrows::Int` — row count of the table (same on every row; carried so a
+  single row is self-contained after filtering).
+- `pct::Float64` — `100 * nmissing / nrows`, or `0.0` for an empty table.
+
+# Examples
+```julia
+using DataFrames
+df = DataFrame(a=[1, missing, 3], b=["x", "y", "z"])
+
+DataFrame(missingstats(df))          # straight into a DataFrame
+filter(r -> r.pct > 20, missingstats(df))
+```
+
+See also [`missingpatternstats`](@ref), [`missingpairstats`](@ref),
+[`missingrowstats`](@ref).
+"""
+function missingstats(tbl)
+    cols, colnames, nrows, ncols = _table_info(tbl)
+    R = NamedTuple{(:column, :eltype, :nmissing, :npresent, :nrows, :pct),
+                   Tuple{Symbol,Type,Int,Int,Int,Float64}}
+    rows = Vector{R}(undef, ncols)
+    for j in 1:ncols
+        col = Tables.getcolumn(cols, j)
+        nm = _count_missing(col)
+        rows[j] = (column   = Symbol(colnames[j]),
+                   eltype   = eltype(col),
+                   nmissing = nm,
+                   npresent = nrows - nm,
+                   nrows    = nrows,
+                   pct      = nrows == 0 ? 0.0 : 100 * nm / nrows)
+    end
+    return rows
+end
+
+"""
+    missingpatternstats(tbl) -> Vector{<:NamedTuple}
+
+Unique row-wise missingness patterns as a Tables.jl-compatible row table —
+the data behind [`missingpatterns`](@ref), without the rendering and without
+the `max_patterns`/`min_pct` display caps: *every* pattern is returned.
+
+One row per distinct pattern, most frequent first (ties broken by first
+appearance, matching the displayed order), with fields:
+
+- `pattern::NamedTuple` — one `Bool` per column, keyed by column name;
+  `true` means *missing* in this pattern.
+- `nmissing::Int` — how many columns are missing in the pattern.
+- `n::Int` — rows matching it.
+- `pct::Float64` — `100 * n / nrows`.
+
+# Examples
+```julia
+ps = missingpatternstats(df)
+ps[1].pattern.a                       # was column `a` missing in the top pattern?
+filter(r -> r.nmissing == 0, ps)      # the fully-complete pattern, if any
+```
+
+!!! note
+    `pattern` is a `NamedTuple` with one field per column, so its *type*
+    depends on the table's width. On tables with many hundreds of columns
+    this costs noticeable compile time on first call; the counts themselves
+    stay cheap, since they come from the deduplicated pattern table.
+
+See also [`missingstats`](@ref), [`missingpairstats`](@ref).
+"""
+function missingpatternstats(tbl)
+    ps = compute_pattern_stats(tbl)
+    return _pattern_rows(ps, Tuple(Symbol(c) for c in ps.colnames))
+end
+
+# Kernel taking the column names as a *type-level* tuple, so the returned
+# `NamedTuple` element type is concrete inside this body.
+function _pattern_rows(ps::PatternStats, names::NTuple{N,Symbol}) where {N}
+    P = NamedTuple{names,NTuple{N,Bool}}
+    R = NamedTuple{(:pattern, :nmissing, :n, :pct),Tuple{P,Int,Int,Float64}}
+    npatterns = length(ps.counts)
+    rows = Vector{R}(undef, npatterns)
+    ps.nrows == 0 && return empty!(rows)
+    for p in 1:npatterns
+        flags = ntuple(j -> ps.pattern_missing[p, j], N)
+        c = ps.counts[p]
+        rows[p] = (pattern  = P(flags),
+                   nmissing = count(identity, flags),
+                   n        = c,
+                   pct      = 100 * c / ps.nrows)
+    end
+    return rows
+end
+
+"""
+    missingpairstats(tbl) -> Vector{<:NamedTuple}
+
+Pairwise co-occurrence of missingness as a Tables.jl-compatible row table —
+the data behind [`missingcooccurrence`](@ref), without the rendering and
+without the `max_cols` display cap.
+
+One row per *unordered* pair of distinct columns (`ncols*(ncols-1)/2` rows,
+in upper-triangle order), with fields:
+
+- `a::Symbol`, `b::Symbol` — the two column names.
+- `phi::Float64` — ϕ coefficient of the two missingness masks.
+- `jaccard::Float64` — Jaccard index of the same masks.
+- `n11::Int` — rows where both `a` and `b` are missing.
+- `n1::Int`, `n2::Int` — rows where `a` (resp. `b`) is missing.
+- `nrows::Int` — row count of the table.
+
+Both coefficients fall out of the same `n11`/`n1`/`n2` counts, so both are
+returned rather than selected by a `method` keyword: the schema stays fixed
+regardless of which one you look at.
+
+Undefined coefficients come back as `NaN`, and the two differ on when that
+happens: `phi` is `NaN` whenever either column is entirely missing or
+entirely present (the 2x2 table is degenerate), while `jaccard` is `NaN`
+only when *neither* column has a single missing value — against a column
+with no missing values the union is still non-empty, so Jaccard is a
+well-defined `0.0`.
+
+# Examples
+```julia
+pairs = missingpairstats(df)
+sort(pairs; by = r -> -r.phi)[1:5]              # most co-missing pairs
+filter(r -> r.n11 > 0 && r.jaccard > 0.5, pairs)
+```
+
+See also [`missingstats`](@ref), [`missingpatternstats`](@ref).
+"""
+function missingpairstats(tbl)
+    ps = compute_pattern_stats(tbl)
+    n, nc = ps.nrows, ps.ncols
+    R = NamedTuple{(:a, :b, :phi, :jaccard, :n11, :n1, :n2, :nrows),
+                   Tuple{Symbol,Symbol,Float64,Float64,Int,Int,Int,Int}}
+    rows = R[]
+    nc < 2 && return rows
+
+    n1, n11 = _cooccurrence_counts(ps)
+    sizehint!(rows, div(nc * (nc - 1), 2))
+    for i in 1:(nc - 1), j in (i + 1):nc
+        na, nb, nab = n1[i], n1[j], n11[i, j]
+        push!(rows, (a       = Symbol(ps.colnames[i]),
+                     b       = Symbol(ps.colnames[j]),
+                     phi     = _phi(nab, na, nb, n),
+                     jaccard = _jaccard(nab, na, nb),
+                     n11     = nab,
+                     n1      = na,
+                     n2      = nb,
+                     nrows   = n))
+    end
+    return rows
+end
+
+"""
+    _accumulate_row!(per_row, col) -> per_row
+
+Add one column's missingness into the per-row tally. Function barrier again:
+specialized on the column's concrete eltype, so the loop stays scalar.
+"""
+@inline function _accumulate_row!(per_row::Vector{Int}, col::AbstractVector)
+    @inbounds for i in eachindex(col)
+        per_row[i] += ismissing(col[i]) ? 1 : 0
+    end
+    return per_row
+end
+
+"""
+    _missing_per_row_hist(cols, nrows, ncols) -> Vector{Int}
+
+Histogram of "missing values in this row", as a `ncols + 1` element vector
+indexed by `count + 1` (so `hist[1]` is the number of fully complete rows).
+Costs one `O(nrows)` `Int` buffer and a single pass per column.
+"""
+function _missing_per_row_hist(cols, nrows::Int, ncols::Int)
+    per_row = zeros(Int, nrows)
+    for j in 1:ncols
+        _accumulate_row!(per_row, Tables.getcolumn(cols, j))
+    end
+    hist = zeros(Int, ncols + 1)
+    @inbounds for i in 1:nrows
+        hist[per_row[i] + 1] += 1
+    end
+    return hist
+end
+
+"""
+    missingrowstats(tbl) -> Vector{<:NamedTuple}
+
+Row-completeness distribution as a Tables.jl-compatible row table — the data
+behind [`missingrows`](@ref).
+
+One row per *observed* missing-count (counts that occur zero times are
+omitted), ascending, with fields:
+
+- `nmissing::Int` — number of missing values in such a row (`0` = complete).
+- `nrows::Int` — how many rows of `tbl` have exactly that many.
+- `pct::Float64` — `100 * nrows / total rows`.
+
+# Examples
+```julia
+rs = missingrowstats(df)
+only(r.nrows for r in rs if r.nmissing == 0)   # complete-case count
+sum(r.nrows for r in rs if r.nmissing > 0)     # rows lost to listwise deletion
+```
+
+See also [`missingstats`](@ref) for the transposed (per-column) view.
+"""
+function missingrowstats(tbl)
+    cols, _, nrows, ncols = _table_info(tbl)
+    R = NamedTuple{(:nmissing, :nrows, :pct),Tuple{Int,Int,Float64}}
+    rows = R[]
+    (nrows == 0 || ncols == 0) && return rows
+
+    hist = _missing_per_row_hist(cols, nrows, ncols)
+    for k in 0:ncols
+        h = hist[k + 1]
+        h == 0 && continue
+        push!(rows, (nmissing = k, nrows = h, pct = 100 * h / nrows))
+    end
+    return rows
+end
+
+# =============================================================================
+# STAGE 2h — Row-completeness distribution (the transpose of missingsummary)
+# =============================================================================
+
+"""
+    missingrows([io::IO=stdout], tbl; sortby=:nmissing, bar_width=30,
+                 color=:auto, missing_color="#f3a9a9")
+
+Distribution of *how many values are missing per row*: how many rows are
+complete, how many are missing exactly one value, two, and so on.
+
+This is the view [`missingsummary`](@ref) (per column) and
+[`missingpatterns`](@ref) (per combination) leave out, and it is the one that
+answers "what would listwise deletion cost me?" — the `0` line is the
+complete-case count, everything below it is what `dropmissing` would discard.
+
+# Arguments
+- `sortby::Symbol`: `:nmissing` (ascending missing-count, default) or
+  `:rows` (descending row count — most common shape first).
+- `bar_width::Int`: width in characters of the longest bar (default: 30).
+- `color::Symbol` / `missing_color::String`: as in [`plotmissing`](@ref);
+  bars are tinted by severity (`nmissing / ncols`), so complete rows carry
+  the "present" color and fully-missing rows the full missing color.
+
+Returns `nothing`; use [`missingrowstats`](@ref) for the same numbers as
+data.
+"""
+function missingrows(io::IO, tbl; sortby::Symbol=:nmissing, bar_width::Int=30,
+                      color::Symbol=:auto, missing_color::String="#f3a9a9")
+    sortby in (:nmissing, :rows) ||
+        throw(ArgumentError("sortby must be :nmissing or :rows, got :$sortby"))
+    color in (:auto, :always, :never) ||
+        throw(ArgumentError("color must be :auto, :always or :never, got :$color"))
+    bar_width > 0 ||
+        throw(ArgumentError("bar_width must be positive, got $bar_width"))
+
+    cols, _, nrows, ncols = _table_info(tbl)
+    if nrows == 0 || ncols == 0
+        println(io, "Empty table — nothing to display")
+        return nothing
+    end
+
+    hist = _missing_per_row_hist(cols, nrows, ncols)
+    ks = [k for k in 0:ncols if hist[k + 1] > 0]
+    sortby === :rows && sort!(ks; by = k -> (-hist[k + 1], k))
+
+    force_color = color === :auto ? nothing : (color === :always)
+    use_color = force_color === nothing ? _use_color(io) : force_color
+    ramp = ColorRamp(_PRESENT_RGB, _parse_hex(missing_color), :missing)
+    rst = use_color ? "\033[0m" : ""
+
+    peak = maximum(k -> hist[k + 1], ks)
+    kw = max(length("missing/row"), maximum(k -> length(string(k)), ks))
+    rw = max(length("rows"), length(string(nrows)))
+
+    buf = IOBuffer()
+    println(buf, ' ', rpad("missing/row", kw), "  ", lpad("rows", rw), "  ",
+            lpad("%", 7), "  distribution")
+    for k in ks
+        h = hist[k + 1]
+        print(buf, ' ', rpad(string(k), kw), "  ", lpad(string(h), rw), "  ",
+              lpad(@sprintf("%.2f%%", 100 * h / nrows), 7), "  ")
+        # Every observed count gets at least one block, so a rare-but-present
+        # shape never renders as an empty line (same visibility guarantee the
+        # heatmap gives a single missing cell inside a large block).
+        nblocks = max(round(Int, bar_width * h / peak), 1)
+        use_color && write(buf, _fg_rgb(_ramp_rgb(ramp, k / ncols)))
+        for _ in 1:nblocks
+            write(buf, '█')
+        end
+        use_color && write(buf, rst)
+        write(buf, '\n')
+    end
+
+    complete = hist[1]
+    incomplete = nrows - complete
+    println(buf, ' ', complete, " complete row", complete == 1 ? "" : "s", " (",
+            @sprintf("%.2f", 100 * complete / nrows), "%) ┊ ",
+            incomplete, " with ≥1 missing (",
+            @sprintf("%.2f", 100 * incomplete / nrows), "%) ┊ ",
+            length(ks), " distinct count", length(ks) == 1 ? "" : "s",
+            " across ", ncols, " column", ncols == 1 ? "" : "s")
+
+    write(io, take!(buf))
+    return nothing
+end
+
+missingrows(tbl; kwargs...) = missingrows(stdout, tbl; kwargs...)
+
+# =============================================================================
+# STAGE 2i — Medium-aware report object
+#
+# `show(io, ::MIME"text/html", x)` cannot be attached to the caller's own
+# table type: defining it for, say, `DataFrame` would be type piracy (and is
+# caught by the Aqua check in the test suite). So the HTML rendering hangs off
+# a type this package owns, which `missingreport` returns.
+# =============================================================================
+
+const _REPORT_PLOT_KWARGS = (:cell_chars, :char_missing, :char_present, :name_width,
+                             :color_cells, :show_row_range, :max_rows, :max_cols,
+                             :layout, :target_lines, :color, :emphasis,
+                             :missing_color, :by, :period)
+
+const _REPORT_HTML_KWARGS = (:max_rows, :max_cols, :missing_color, :emphasis,
+                             :title, :by, :period)
+
+"""
+    MissingReport
+
+A table plus display options, rendered on demand in whatever medium asks for
+it. Construct it with [`missingreport`](@ref) rather than directly.
+"""
+struct MissingReport{T,K<:NamedTuple}
+    tbl::T
+    kwargs::K
+end
+
+"""
+    missingreport(tbl; kwargs...) -> MissingReport
+
+Wrap `tbl` in an object that renders itself as the missing-value heatmap in
+whichever medium displays it:
+
+- `MIME"text/plain"` (REPL, logs, files) → the terminal heatmap, identical
+  to [`plotmissing`](@ref).
+- `MIME"text/html"` (Jupyter, Pluto, Documenter, any HTML-aware display) →
+  the HTML heatmap, identical to [`missinghtml`](@ref).
+
+So in a notebook `missingreport(df)` shows the colored HTML grid with
+per-cell tooltips, and the very same expression in a terminal shows the
+Unicode grid — with no `if` on the caller's side.
+
+Keyword arguments are those of `plotmissing` and `missinghtml`; each is
+forwarded only to the renderer that accepts it, so per-medium defaults
+(e.g. a `200×60` HTML grid vs a `50×20` terminal grid) are preserved unless
+you override them explicitly. An unknown keyword is an error at construction
+time, not at display time.
+
+# Examples
+```julia
+missingreport(df)
+missingreport(df; emphasis=:missing, missing_color="#ff6600")
+missingreport(df; by=:region)                 # grouped in both media
+missingreport(df; layout=:compact, title="Cohort A")
+
+# force one medium explicitly
+show(stdout, MIME"text/html"(), missingreport(df))
+```
+
+[`plotmissing`](@ref) and [`missinghtml`](@ref) are unchanged and remain the
+direct, single-medium entry points.
+"""
+function missingreport(tbl; kwargs...)
+    Tables.istable(tbl) || throw(ArgumentError(
+        "input of type $(typeof(tbl)) is not a Tables.jl-compatible table " *
+        "(DataFrame, CSV.File, NamedTuple of vectors, ...)"))
+    nt = values(kwargs)
+    for k in keys(nt)
+        (k in _REPORT_PLOT_KWARGS || k in _REPORT_HTML_KWARGS) || throw(ArgumentError(
+            "unsupported keyword argument `$k` for missingreport; accepted: " *
+            join(sort(collect(union(_REPORT_PLOT_KWARGS, _REPORT_HTML_KWARGS))), ", ")))
+    end
+    return MissingReport(tbl, nt)
+end
+
+# Forward only the keywords the target renderer actually accepts.
+_report_kwargs(nt::NamedTuple, allowed::Tuple) =
+    NamedTuple{filter(k -> k in allowed, keys(nt))}(nt)
+
+Base.show(io::IO, ::MIME"text/plain", r::MissingReport) =
+    plotmissing(io, r.tbl; _report_kwargs(r.kwargs, _REPORT_PLOT_KWARGS)...)
+
+Base.show(io::IO, ::MIME"text/html", r::MissingReport) =
+    print(io, missinghtml(r.tbl; _report_kwargs(r.kwargs, _REPORT_HTML_KWARGS)...))
+
+Base.show(io::IO, r::MissingReport) = show(io, MIME"text/plain"(), r)
 
 # =============================================================================
 # Precompile workload — makes the first `plotmissing` call in a fresh REPL
@@ -2060,7 +2543,14 @@ if _HAS_PRECOMPILETOOLS
         missingsummary(_io, _tbl)
         missingcooccurrence(_io, _tbl)
         plotmissingdiff(_io, _tbl, _tbl)
+        missingrows(_io, _tbl)
         missinghtml(_tbl)
+        missingstats(_tbl)
+        missingpatternstats(_tbl)
+        missingpairstats(_tbl)
+        missingrowstats(_tbl)
+        show(_io, MIME"text/plain"(), missingreport(_tbl))
+        show(_io, MIME"text/html"(), missingreport(_tbl))
     end
 end
 

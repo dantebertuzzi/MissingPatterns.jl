@@ -12,6 +12,7 @@ using MissingPatterns: _parse_hex, _ramp_rgb, _blend, ColorRamp, _PRESENT_RGB,
                         render_grid!, render_summary!, render_grid_compact!,
                         render_summary_compact!, render_pattern_table!,
                         _prop_to_char
+using MissingPatterns: Tables
 
 const ANSI_RE = r"\e\[[0-9;]*m"
 strip_ansi(s) = replace(s, ANSI_RE => "")
@@ -933,6 +934,242 @@ end
         @test isvalid(out)
         @test occursin("açã", out) || occursin("ação", out)
         @test occursin("niñ", out) || occursin("niño", out)
+    end
+
+    # =========================================================================
+    # Data API — missingstats
+    # =========================================================================
+    @testset "missingstats" begin
+        tbl = (a = [1, missing, 3, missing], b = ["x", "y", "z", "w"],
+               c = [missing, missing, missing, missing])
+        rows = missingstats(tbl)
+
+        @test length(rows) == 3
+        @test Tables.istable(rows)
+        @test [r.column for r in rows] == [:a, :b, :c]        # table order preserved
+        @test [r.nmissing for r in rows] == [2, 0, 4]
+        @test [r.npresent for r in rows] == [2, 4, 0]
+        @test all(r -> r.nrows == 4, rows)
+        @test [r.pct for r in rows] == [50.0, 0.0, 100.0]
+        @test rows[1].eltype == Union{Missing,Int}
+        @test rows[2].eltype == String
+
+        # agrees with the rendered summary
+        out = rendered(missingsummary, tbl; color=:never, sortby=:none)
+        @test occursin("50.00%", out) && occursin("100.00%", out)
+
+        df = DataFrame(missingstats(DataFrame(tbl)))
+        @test names(df) == ["column", "eltype", "nmissing", "npresent", "nrows", "pct"]
+        @test nrow(df) == 3
+
+        empty_rows = missingstats((a = Int[], b = Int[]))
+        @test length(empty_rows) == 2
+        @test all(r -> r.nrows == 0 && r.nmissing == 0 && r.pct == 0.0, empty_rows)
+        @test isempty(missingstats(NamedTuple()))
+
+        @test @inferred(MissingPatterns._count_missing([1, missing, 3])) == 1
+        @test MissingPatterns._count_missing(Union{Int,Missing}[]) == 0
+    end
+
+    # =========================================================================
+    # Data API — missingpatternstats
+    # =========================================================================
+    @testset "missingpatternstats" begin
+        tbl = (A = [1, missing, 3, missing, 5, 6, 7, missing],
+               B = [missing, 2, 3, missing, 5, 6, 7, missing],
+               C = [1, 2, 3, 4, missing, 6, 7, 8])
+        rows = missingpatternstats(tbl)
+        ps = compute_pattern_stats(tbl)
+
+        @test Tables.istable(rows)
+        @test length(rows) == length(ps.counts)               # no display cap applied
+        @test [r.n for r in rows] == ps.counts                # frequency order preserved
+        @test sum(r.n for r in rows) == 8
+        @test sum(r.pct for r in rows) ≈ 100.0
+        @test keys(rows[1].pattern) == (:A, :B, :C)
+        @test rows[1].pattern == (A = false, B = false, C = false)   # complete rows lead
+        @test rows[1].nmissing == 0
+        @test rows[2].pattern == (A = true, B = true, C = false)
+        @test all(r -> r.nmissing == count(identity, values(r.pattern)), rows)
+
+        # matches the rendered table cell for cell
+        out = rendered(missingpatterns, tbl; color_cells=false)
+        @test occursin("37.5%", out) && occursin("25.0%", out)
+
+        df = DataFrame(missingpatternstats(DataFrame(tbl)))
+        @test nrow(filter(r -> r.pattern.A, df)) == 2          # 2 distinct patterns have A missing
+        @test sum(r.n for r in eachrow(df) if r.pattern.A) == 3  # covering 3 rows
+
+        @test isempty(missingpatternstats((a = Int[],)))
+        @test isempty(missingpatternstats(NamedTuple()))
+
+        # wide table: exercises the >64-column key fallback through the data API
+        wide = bigtable(40, 70)
+        wrows = missingpatternstats(wide)
+        @test sum(r.n for r in wrows) == 40
+        @test length(keys(wrows[1].pattern)) == 70
+    end
+
+    # =========================================================================
+    # Data API — missingpairstats
+    # =========================================================================
+    @testset "missingpairstats" begin
+        tbl = (a = [1, missing, 3, missing, 5, 6, 7, missing],
+               b = [missing, 2, 3, missing, 5, 6, 7, missing],
+               c = [1, 2, 3, 4, missing, 6, 7, 8])
+        rows = missingpairstats(tbl)
+
+        @test Tables.istable(rows)
+        @test length(rows) == 3                                # 3 choose 2, no max_cols cap
+        @test [(r.a, r.b) for r in rows] == [(:a, :b), (:a, :c), (:b, :c)]  # upper triangle
+        @test all(r -> r.nrows == 8, rows)
+
+        # every value agrees with the matrix the renderer draws, for both methods
+        Mphi, colnms, _, _ = compute_cooccurrence(tbl; method=:phi)
+        Mjac, _, _, _      = compute_cooccurrence(tbl; method=:jaccard)
+        idx = Dict(Symbol(nm) => i for (i, nm) in enumerate(colnms))
+        for r in rows
+            i, j = idx[r.a], idx[r.b]
+            @test r.phi ≈ Mphi[i, j]
+            @test r.jaccard ≈ Mjac[i, j]
+        end
+
+        ab = rows[1]
+        @test ab.n11 == 2 && ab.n1 == 3 && ab.n2 == 3
+        @test ab.jaccard ≈ 2 / 4
+
+        # ϕ is undefined against a column with no missing values (degenerate
+        # 2x2 table); Jaccard is a well-defined 0.0 there — the union is not empty
+        nomiss = (a = [1, missing, 3], b = [1, 2, 3])
+        r = only(missingpairstats(nomiss))
+        @test isnan(r.phi)
+        @test r.jaccard == 0.0
+        @test r.n11 == 0 && r.n2 == 0
+
+        # ...and NaN for both when neither column has a single missing value
+        clean = only(missingpairstats((a = [1, 2], b = [3, 4])))
+        @test isnan(clean.phi) && isnan(clean.jaccard)
+
+        @test isempty(missingpairstats((a = [1, missing],)))   # needs >= 2 columns
+        @test isempty(missingpairstats(NamedTuple()))
+
+        df = DataFrame(missingpairstats(DataFrame(tbl)))
+        @test names(df) == ["a", "b", "phi", "jaccard", "n11", "n1", "n2", "nrows"]
+    end
+
+    # =========================================================================
+    # Data API + display — missingrowstats / missingrows
+    # =========================================================================
+    @testset "missingrows" begin
+        tbl = (a = [1, missing, 3, missing], b = [missing, missing, 3, 4],
+               c = [1, 2, 3, missing])
+        rows = missingrowstats(tbl)
+
+        @test Tables.istable(rows)
+        @test [r.nmissing for r in rows] == [0, 1, 2]          # ascending, gaps omitted
+        @test [r.nrows for r in rows] == [1, 1, 2]
+        @test sum(r.nrows for r in rows) == 4                  # partitions the rows
+        @test sum(r.pct for r in rows) ≈ 100.0
+        @test only(r.nrows for r in rows if r.nmissing == 0) == 1   # complete-case count
+
+        # transposed view agrees with the per-column one on the grand total
+        @test sum(r.nmissing * r.nrows for r in rows) ==
+              sum(r.nmissing for r in missingstats(tbl))
+
+        out = rendered(missingrows, tbl; color=:never)
+        @test occursin("missing/row", out)
+        @test occursin("1 complete row (25.00%)", out)
+        @test occursin("3 with ≥1 missing (75.00%)", out)
+        @test occursin('█', out)
+        @test isvalid(out)
+
+        # every observed count gets at least one block, however rare
+        rare = (a = vcat([missing], fill(1, 999)), b = fill(1, 1000))
+        out_rare = rendered(missingrows, rare; color=:never)
+        @test occursin(r"^ 1 +1 +0\.10% +█$"m, out_rare)
+
+        out_sorted = rendered(missingrows, tbl; sortby=:rows, color=:never)
+        @test findfirst("\n 2 ", out_sorted) < findfirst("\n 0 ", out_sorted)
+
+        @test occursin("Empty table", rendered(missingrows, (a = Int[],)))
+        @test isempty(missingrowstats((a = Int[],)))
+        @test isempty(missingrowstats(NamedTuple()))
+
+        @test_throws ArgumentError missingrows(IOBuffer(), tbl; sortby=:nope)
+        @test_throws ArgumentError missingrows(IOBuffer(), tbl; color=:nope)
+        @test_throws ArgumentError missingrows(IOBuffer(), tbl; bar_width=0)
+
+        # color path
+        out_c = rendered(missingrows, tbl; color=:always)
+        @test occursin("\033[38;2;", out_c)
+        @test strip_ansi(out_c) == rendered(missingrows, tbl; color=:never)
+
+        @test DataFrame(missingrowstats(DataFrame(tbl))) |> nrow == 3
+    end
+
+    # =========================================================================
+    # missinghtml grouping
+    # =========================================================================
+    @testset "missinghtml by/period" begin
+        tbl = (region = ["north", "south", "north", "east"],
+               v = [1, missing, 3, missing])
+        h = missinghtml(tbl; by=:region)
+        @test occursin("north", h) && occursin("south", h) && occursin("east", h)
+        @test !occursin("· rows ", h)              # labels are categories, not row ranges
+        @test occursin("· rows ", missinghtml(tbl))  # ungrouped still says "rows"
+
+        t2 = (date = [Date(2023, 1, 15), Date(2024, 6, 1), Date(2024, 6, 2)],
+              v = [1, missing, 3])
+        h2 = missinghtml(t2; by=:date, period=:year)
+        @test occursin("2023", h2) && occursin("2024", h2)
+        @test_throws ArgumentError missinghtml(t2; by=:date, period=:century)
+    end
+
+    # =========================================================================
+    # MissingReport — medium-aware display
+    # =========================================================================
+    @testset "missingreport" begin
+        tbl = (a = [1, missing, 3, 4], b = [missing, 2, 3, missing])
+        r = missingreport(tbl)
+
+        @test r isa MissingPatterns.MissingReport
+        @test showable(MIME"text/plain"(), r)
+        @test showable(MIME"text/html"(), r)
+
+        # each medium reproduces its single-medium entry point exactly
+        plain = sprint(show, MIME"text/plain"(), r; context = :color => false)
+        @test plain == rendered(plotmissing, tbl; color=:never)
+        html = sprint(show, MIME"text/html"(), r)
+        @test html == missinghtml(tbl)
+
+        # 2-arg show falls back to text/plain
+        @test sprint(show, r; context = :color => false) == plain
+
+        # keywords reach only the renderer that accepts them
+        r2 = missingreport(tbl; title="Cohort A", layout=:compact, emphasis=:missing)
+        @test occursin("Cohort A", sprint(show, MIME"text/html"(), r2))
+        plain2 = sprint(show, MIME"text/plain"(), r2; context = :color => false)
+        @test plain2 == rendered(plotmissing, tbl; layout=:compact,
+                                  emphasis=:missing, color=:never)
+
+        # per-medium defaults survive when the caller does not override them
+        @test sprint(show, MIME"text/html"(), missingreport(tbl)) ==
+              missinghtml(tbl)                      # 200x60 html grid, not plotmissing's 50x20
+
+        # grouping applies in both media
+        g = (region = ["north", "south", "north"], v = [1, missing, 3])
+        rg = missingreport(g; by=:region)
+        @test occursin("north", sprint(show, MIME"text/html"(), rg))
+        @test occursin("nort", sprint(show, MIME"text/plain"(), rg; context = :color => false))
+
+        # colors follow the IO, as for any show method
+        @test occursin("\033[", sprint(show, MIME"text/plain"(), r; context = :color => true))
+
+        @test_throws ArgumentError missingreport(tbl; bogus=1)
+        @test_throws ArgumentError missingreport(42)
+        # keyword *names* are checked eagerly, *values* by the renderer at show time
+        bad = missingreport(tbl; layout=:nope)
+        @test_throws ArgumentError sprint(show, MIME"text/plain"(), bad)
     end
 
 end
