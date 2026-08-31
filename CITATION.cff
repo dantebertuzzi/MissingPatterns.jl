@@ -1,0 +1,26 @@
+cff-version: 1.2.0
+message: "If you use this software, please cite it using these metadata."
+title: "MissingPatterns.jl: terminal-based exploration of missing data patterns in Julia"
+abstract: >-
+  MissingPatterns.jl is a Julia package for exploring missing data patterns in
+  any Tables.jl-compatible source. It renders missing-value heatmaps, unique
+  missingness patterns, per-column summaries, pairwise co-occurrence of
+  missingness and before/after diffs directly in the terminal using Unicode and
+  ANSI truecolor, with no plotting-library dependencies, and can export the same
+  heatmap as standalone HTML.
+type: software
+authors:
+  - family-names: Bertuzzi
+    given-names: Dante
+repository-code: "https://github.com/dantebertuzzi/MissingPatterns.jl"
+url: "https://dantebertuzzi.github.io/MissingPatterns.jl/stable"
+license: MIT
+keywords:
+  - julia
+  - missing data
+  - data visualization
+  - exploratory data analysis
+  - data quality
+  - terminal
+version: 0.4.0
+date-released: 2026-08-08

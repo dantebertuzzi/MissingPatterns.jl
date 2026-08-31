@@ -1,0 +1,28 @@
+{
+  "title": "MissingPatterns.jl: terminal-based exploration of missing data patterns in Julia",
+  "description": "<p>MissingPatterns.jl is a Julia package for exploring missing data patterns in any <a href=\"https://github.com/JuliaData/Tables.jl\">Tables.jl</a>-compatible source (DataFrame, CSV.File, NamedTuple of vectors, row tables, ...).</p><p>It renders missing-value heatmaps (<code>plotmissing</code>), unique missingness patterns (<code>missingpatterns</code>, the diagnostic produced by R's <code>mice::md.pattern()</code>), per-column summaries with sparklines (<code>missingsummary</code>), pairwise phi/Jaccard co-occurrence of missingness masks (<code>missingcooccurrence</code>) and before/after diffs for auditing imputation steps (<code>plotmissingdiff</code>) directly in the terminal, using Unicode and ANSI truecolor and with no plotting-library dependencies. The same heatmap can be exported as a self-contained HTML fragment (<code>missinghtml</code>).</p>",
+  "upload_type": "software",
+  "access_right": "open",
+  "license": {"id": "mit"},
+  "creators": [
+    {
+      "name": "Bertuzzi, Dante"
+    }
+  ],
+  "keywords": [
+    "julia",
+    "missing data",
+    "data visualization",
+    "exploratory data analysis",
+    "data quality",
+    "terminal"
+  ],
+  "related_identifiers": [
+    {
+      "identifier": "https://dantebertuzzi.github.io/MissingPatterns.jl/stable",
+      "relation": "isDocumentedBy",
+      "resource_type": "publication-softwaredocumentation",
+      "scheme": "url"
+    }
+  ]
+}

@@ -5,6 +5,30 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Added
+- `CITATION.cff` — machine-readable citation metadata, so GitHub renders a
+  "Cite this repository" entry and reference managers can import it.
+- `.zenodo.json` — deposition metadata (title, abstract, creators, MIT license,
+  keywords) used by Zenodo when it archives a GitHub release and mints the DOI.
+  Without it, Zenodo would infer everything from the repository alone.
+- Aqua.jl added to the test suite (`Aqua.test_all`): checks for stale/unused
+  dependencies, missing compat bounds, method ambiguities, unbound type
+  parameters, undefined exports and type piracy.
+
+### Removed
+- **`CSV` dropped from `[deps]`.** It was declared as a dependency but never
+  loaded by `src/` — only mentioned in docstrings as an example of a
+  Tables.jl source. Installing MissingPatterns no longer pulls in CSV.jl and
+  its transitive dependencies (Parsers, InlineStrings, SentinelArrays,
+  PooledArrays, WeakRefStrings, WorkerUtilities). No behavior change: any
+  `CSV.File` still works, since it is consumed through the Tables.jl interface.
+
+### Fixed
+- `Project.toml`: declared the missing `DataFrames` and `Test` compat bounds
+  for the test target (flagged by Aqua).
+
 ## [0.4.0] - 2026-08-08
 
 ### Added

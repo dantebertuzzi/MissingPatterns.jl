@@ -1,4 +1,5 @@
 using Test
+using Aqua
 using Dates
 using DataFrames
 using MissingPatterns
@@ -29,6 +30,13 @@ function bigtable(nrows=10_000, ncols=25; miss_every=17)
 end
 
 @testset "MissingPatterns" begin
+
+    # =========================================================================
+    # Package quality (unused/stale deps, compat bounds, ambiguities, piracy)
+    # =========================================================================
+    @testset "Aqua" begin
+        Aqua.test_all(MissingPatterns)
+    end
 
     # =========================================================================
     # Tables.jl interface
