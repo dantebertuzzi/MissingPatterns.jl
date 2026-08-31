@@ -16,6 +16,12 @@ makedocs(;
     ),
     pages=[
         "Home" => "index.md",
+        "Heatmaps" => "heatmap.md",
+        "Diagnostics" => "diagnostics.md",
+        "Data API" => "data.md",
+        "Export and output" => "export.md",
+        "Public API" => "api.md",
+        "Internals" => "internals.md",
     ],
 )
 

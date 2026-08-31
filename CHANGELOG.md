@@ -5,6 +5,19 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Changed
+- Documentation split from a single `index.md` into seven pages (Home,
+  Heatmaps, Diagnostics, Data API, Export and output, Public API, Internals).
+  The single page had reached 106.6 KiB generated, past Documenter's
+  `size_threshold_warn` of 100 KiB and heading for the 200 KiB hard limit at
+  which the build fails outright.
+- The API reference is now split in two: `Public API` (`Private = false`)
+  carries the exported surface, `Internals` (`Public = false`) the documented
+  non-exported helpers, which previously sat interleaved with the public
+  functions in one list.
+
 ## [0.5.0] - 2026-08-31
 
 ### Added
