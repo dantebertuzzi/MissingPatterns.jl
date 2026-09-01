@@ -14,6 +14,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   [10.5281/zenodo.22217100](https://doi.org/10.5281/zenodo.22217100). Recorded
   in `CITATION.cff` (concept DOI in `doi:`, version DOI under `identifiers:`)
   and shown as a badge in the README.
+- `CITATION.bib` — ready-to-paste BibTeX entry, alongside the `CITATION.cff`
+  that GitHub's "Cite this repository" button reads.
+- README gained a `How to cite` section: the BibTeX entry, why the version
+  used should be cited rather than "the latest", a reproducibility checklist,
+  and the distinction between the concept DOI and the per-release DOIs. Same
+  layout as the sibling packages (MicroSUS.jl, DeBRief.jl).
 
 ### Changed
 - Documentation split from a single `index.md` into seven pages (Home,

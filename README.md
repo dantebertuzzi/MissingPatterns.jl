@@ -382,26 +382,72 @@ plotmissing(CSV.File("data.csv"))
 - **IO-customizable output** — render to `stdout`, a file, or an `IOBuffer`
 - **TTY-aware ANSI/truecolor coloring** — colors enabled only where supported
 
-## Citation
+## How to cite
 
-Every release is archived on Zenodo with its own DOI. Cite the **concept
-DOI**, [10.5281/zenodo.22217099](https://doi.org/10.5281/zenodo.22217099),
-which covers the software across all versions and always resolves to the most
-recent one — unless you need to pin the exact version you ran, in which case
-use that release's own DOI (v0.5.0 is
-[10.5281/zenodo.22217100](https://doi.org/10.5281/zenodo.22217100)).
+### 1. The software
+
+The repository ships a [`CITATION.cff`](CITATION.cff), which GitHub reads
+natively: the **"Cite this repository"** button in the sidebar generates ready
+APA and BibTeX. A [`CITATION.bib`](CITATION.bib) is also provided:
 
 ```bibtex
-@software{bertuzzi_missingpatterns,
-  author    = {Bertuzzi, Dante},
-  title     = {{MissingPatterns.jl}: terminal-based exploration of
-               missing data patterns in Julia},
-  publisher = {Zenodo},
-  doi       = {10.5281/zenodo.22217099},
-  url       = {https://doi.org/10.5281/zenodo.22217099}
+@software{bertuzzi_missingpatterns_2026,
+  author  = {Bertuzzi, Dante},
+  title   = {{MissingPatterns.jl}: terminal-based exploration of missing
+             data patterns in {Julia}},
+  year    = {2026},
+  version = {0.5.0},
+  doi     = {10.5281/zenodo.22217099},
+  url     = {https://github.com/dantebertuzzi/MissingPatterns.jl},
+  note    = {Julia package}
 }
 ```
 
-`CITATION.cff` holds the same metadata in machine-readable form — it is what
-GitHub's *Cite this repository* button reads and what reference managers
-import.
+**Cite the version you used**, not "the latest". What the package reports is
+part of your result, and it has changed between releases: `plotmissing`'s
+`period` default became `nothing` in 0.4.0, the data API and `missingrows`
+arrived in 0.5.0, and `missingpairstats` reports ϕ and Jaccard side by side
+where `missingcooccurrence` shows one at a time. Run `pkg> status
+MissingPatterns` and use the number it prints.
+
+### 2. Reproducibility
+
+MissingPatterns.jl reads data, it does not supply any — so there is no
+upstream source to cite alongside it, unlike a package that downloads a
+public database. What makes a missingness figure reproducible is the input
+plus the environment. So that someone else reaches your numbers, record: the
+**MissingPatterns.jl and Julia versions**; the `Project.toml` and
+`Manifest.toml` of the environment (the `Manifest.toml` pins the whole
+dependency tree and is what makes it reconstructible with
+`Pkg.instantiate()`); and the dataset itself — its own citation, version or
+extraction date, and any filtering applied before the table reached this
+package, since dropping rows changes every count reported here.
+
+If you reproduce a figure rather than a number, note the keywords too:
+`layout`, `max_rows`/`max_cols` and `by`/`period` determine how rows are
+compressed into blocks, so two calls on the same data can render differently.
+The [Data API](#getting-the-numbers-out) returns the uncompressed numbers and
+is the more citable form.
+
+### The standards behind this
+
+| Standard | What it establishes |
+|---|---|
+| [FORCE11 — Software Citation Principles](https://force11.org/info/software-citation-principles-published-2016/) | Software is a citable research product. Six principles: importance, credit, unique identification, persistence, accessibility and **specificity** (cite the exact version). |
+| [Citation File Format (CFF) 1.2.0](https://citation-file-format.github.io/) | Machine-readable citation metadata. What GitHub and Zenodo consume. |
+| [Zenodo + GitHub](https://docs.github.com/en/repositories/archiving-a-github-repository/referencing-and-citing-content) | Mints a persistent DOI per release, plus a *concept DOI* always pointing at the newest version. |
+
+**The DOIs of this project**: the repository is connected to
+[Zenodo](https://zenodo.org), so every release is archived and gets a
+persistent identifier — the citation no longer depends on the GitHub URL
+surviving a rename or a transfer. Two DOIs coexist, and they are not
+interchangeable:
+
+| DOI | What it identifies |
+|---|---|
+| [10.5281/zenodo.22217099](https://doi.org/10.5281/zenodo.22217099) | *Concept DOI* — the project as a whole. Always resolves to the newest version; it is what the badge at the top of this README points at. |
+| one per release | Each archived version gets its own — 0.5.0 is [10.5281/zenodo.22217100](https://doi.org/10.5281/zenodo.22217100). All of them are listed on the [Zenodo page](https://doi.org/10.5281/zenodo.22217099). |
+
+The BibTeX above carries the concept DOI, so it keeps working across releases.
+**In a paper, swap it for the DOI of the version you used**: the concept DOI
+says which project you used, the version DOI says which code actually ran.

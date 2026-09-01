@@ -1,33 +1,38 @@
 cff-version: 1.2.0
-message: "If you use this software, please cite it using these metadata."
+message: "If you use MissingPatterns.jl in your research, please cite it as below."
+type: software
 title: "MissingPatterns.jl: terminal-based exploration of missing data patterns in Julia"
 abstract: >-
   MissingPatterns.jl is a Julia package for exploring missing data patterns in
   any Tables.jl-compatible source. It renders missing-value heatmaps, unique
-  missingness patterns, per-column summaries, pairwise co-occurrence of
-  missingness and before/after diffs directly in the terminal using Unicode and
-  ANSI truecolor, with no plotting-library dependencies, and can export the same
-  heatmap as standalone HTML.
-type: software
+  missingness patterns, per-column and per-row summaries, pairwise
+  co-occurrence of missingness and before/after diffs directly in the terminal
+  using Unicode and ANSI truecolor, with no plotting-library dependencies. The
+  same views are also available as Tables.jl row tables, and the heatmap can be
+  exported as standalone HTML.
 authors:
   - family-names: Bertuzzi
     given-names: Dante
-repository-code: "https://github.com/dantebertuzzi/MissingPatterns.jl"
-url: "https://dantebertuzzi.github.io/MissingPatterns.jl/stable"
+    email: dantesbertuzzi@gmail.com
+version: 0.5.0
+date-released: "2026-09-01"
 license: MIT
-# Concept DOI: resolves to the most recent archived version. Cite this one
-# unless you specifically need to pin the version you actually used.
 doi: 10.5281/zenodo.22217099
 identifiers:
   - type: doi
+    value: 10.5281/zenodo.22217099
+    description: >-
+      Concept DOI — always resolves to the most recent
+      version of MissingPatterns.jl.
+  - type: doi
     value: 10.5281/zenodo.22217100
-    description: Archived snapshot of version 0.5.0.
+    description: DOI of version 0.5.0.
+repository-code: "https://github.com/dantebertuzzi/MissingPatterns.jl"
+url: "https://dantebertuzzi.github.io/MissingPatterns.jl/stable/"
 keywords:
-  - julia
+  - Julia
   - missing data
   - data visualization
   - exploratory data analysis
   - data quality
   - terminal
-version: 0.5.0
-date-released: 2026-09-01

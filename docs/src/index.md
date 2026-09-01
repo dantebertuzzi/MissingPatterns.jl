@@ -46,10 +46,30 @@ row table instead of printing — see [Data API](@ref).
 
 Full docstrings are in the [Public API](@ref) reference.
 
-## Citation
+## How to cite
 
-Every release is archived on Zenodo. Cite the concept DOI,
-[10.5281/zenodo.22217099](https://doi.org/10.5281/zenodo.22217099), which
-covers the software across all versions; use a release's own DOI to pin the
-exact version you ran. `CITATION.cff` in the repository carries the same
-metadata in machine-readable form.
+Every release is archived on Zenodo. The repository ships a `CITATION.cff`
+(which GitHub's *Cite this repository* button reads) and a `CITATION.bib`:
+
+```bibtex
+@software{bertuzzi_missingpatterns_2026,
+  author  = {Bertuzzi, Dante},
+  title   = {{MissingPatterns.jl}: terminal-based exploration of missing
+             data patterns in {Julia}},
+  year    = {2026},
+  version = {0.5.0},
+  doi     = {10.5281/zenodo.22217099},
+  url     = {https://github.com/dantebertuzzi/MissingPatterns.jl},
+  note    = {Julia package}
+}
+```
+
+Two DOIs coexist and are not interchangeable: the *concept DOI*
+[10.5281/zenodo.22217099](https://doi.org/10.5281/zenodo.22217099) identifies
+the project as a whole and always resolves to the newest version, while each
+release gets its own (0.5.0 is
+[10.5281/zenodo.22217100](https://doi.org/10.5281/zenodo.22217100)). **Cite
+the version you actually ran** — what the package reports has changed between
+releases. See the
+[README](https://github.com/dantebertuzzi/MissingPatterns.jl#how-to-cite) for
+the reproducibility checklist.
