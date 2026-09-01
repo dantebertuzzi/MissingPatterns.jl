@@ -403,7 +403,7 @@ APA and BibTeX. A [`CITATION.bib`](CITATION.bib) is also provided:
   title   = {{MissingPatterns.jl}: terminal-based exploration of missing
              data patterns in {Julia}},
   year    = {2026},
-  version = {0.5.0},
+  version = {0.5.1},
   doi     = {10.5281/zenodo.22217099},
   url     = {https://github.com/dantebertuzzi/MissingPatterns.jl},
   note    = {Julia package}

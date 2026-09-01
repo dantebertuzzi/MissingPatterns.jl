@@ -14,7 +14,7 @@ authors:
   - family-names: Bertuzzi
     given-names: Dante
     email: dantesbertuzzi@gmail.com
-version: 0.5.0
+version: 0.5.1
 date-released: "2026-09-01"
 license: MIT
 doi: 10.5281/zenodo.22217099
