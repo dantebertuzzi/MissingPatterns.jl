@@ -2170,9 +2170,11 @@ appearance, matching the displayed order), with fields:
 
 # Examples
 ```julia
-ps = missingpatternstats(df)
-ps[1].pattern.a                       # was column `a` missing in the top pattern?
-filter(r -> r.nmissing == 0, ps)      # the fully-complete pattern, if any
+tbl = (age = [34, missing, 51], income = [missing, 4200, 5100])
+ps = missingpatternstats(tbl)
+
+ps[1].pattern.age                 # was `age` missing in the most frequent pattern?
+filter(r -> r.nmissing == 0, ps)  # the fully-complete pattern, if any
 ```
 
 !!! note
@@ -2237,8 +2239,12 @@ well-defined `0.0`.
 
 # Examples
 ```julia
-pairs = missingpairstats(df)
-sort(pairs; by = r -> -r.phi)[1:5]              # most co-missing pairs
+pairs = missingpairstats(tbl)
+
+# most co-missing pairs; `first` rather than `[1:5]`, which throws on a
+# table with fewer than five pairs
+first(sort(pairs; by = r -> -r.phi), 5)
+
 filter(r -> r.n11 > 0 && r.jaccard > 0.5, pairs)
 ```
 

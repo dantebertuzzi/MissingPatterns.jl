@@ -1172,4 +1172,42 @@ end
         @test_throws ArgumentError sprint(show, MIME"text/plain"(), bad)
     end
 
+    # =========================================================================
+    # The examples in README.md / docs/src/data.md and in the docstrings, run
+    # verbatim. A published example that throws is a bug like any other; this
+    # caught `[1:5]` indexing into a 3-element result and a `pattern.age`
+    # lookup against a table whose columns were named A/B/C.
+    # =========================================================================
+    @testset "documented examples run" begin
+        df = DataFrame(age    = [34, missing, 51, missing, 29],
+                       income = [missing, 4200, 5100, missing, 3300],
+                       city   = ["SP", "RJ", "BH", "SP", missing])
+
+        @test nrow(DataFrame(missingstats(df))) == 3
+        @test length(filter(r -> r.pct > 20, missingstats(df))) == 2
+
+        # `first(..., 5)` must not throw on a table with fewer than five pairs
+        top = first(sort(missingpairstats(df); by = r -> -r.phi), 5)
+        @test length(top) == 3
+        @test issorted(top; by = r -> -r.phi)
+
+        ps = missingpatternstats(df)
+        @test length(filter(r -> r.pattern.age && !r.pattern.income, ps)) == 1
+        @test length(filter(r -> r.nmissing == 0, ps)) == 1
+
+        rs = missingrowstats(df)
+        @test only(r.nrows for r in rs if r.nmissing == 0) == 1
+        @test sum(r.nrows for r in rs if r.nmissing > 0) == 4
+
+        # docstring examples
+        tbl = (age = [34, missing, 51], income = [missing, 4200, 5100])
+        ps2 = missingpatternstats(tbl)
+        @test ps2[1].pattern.age isa Bool
+        @test length(filter(r -> r.nmissing == 0, ps2)) == 1
+
+        pairs = missingpairstats(tbl)
+        @test length(first(sort(pairs; by = r -> -r.phi), 5)) == 1   # only 1 pair
+        @test filter(r -> r.n11 > 0 && r.jaccard > 0.5, pairs) == eltype(pairs)[]
+    end
+
 end

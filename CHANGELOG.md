@@ -7,6 +7,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+- Two published examples threw when run verbatim. `missingpairstats`'s
+  "most co-missing pairs" example indexed the result with `[1:5]`, which
+  raises `BoundsError` on any table with fewer than five column pairs (i.e.
+  fewer than four columns); it now uses `first(..., 5)`, which clamps.
+  `missingpatternstats`'s example filtered on `r.pattern.age`/`r.pattern.income`
+  against an undefined `df`, so pasting it against a table with different
+  column names raised `FieldError`. Both example blocks (README, docs and
+  docstrings) now define the table they operate on, so they can be pasted and
+  run as-is.
+- The documented examples are now executed by the test suite, so a published
+  example that throws fails CI like any other bug.
+
 ### Added
 - DOI. Releases are archived on Zenodo; the concept DOI
   [10.5281/zenodo.22217099](https://doi.org/10.5281/zenodo.22217099) covers

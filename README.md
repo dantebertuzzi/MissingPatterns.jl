@@ -281,17 +281,24 @@ read here can never disagree with the one drawn on screen.
 ```julia
 using DataFrames
 
-DataFrame(missingstats(df))                        # straight into a DataFrame
-filter(r -> r.pct > 20, missingstats(df))          # columns worse than 20% missing
+df = DataFrame(age    = [34, missing, 51, missing, 29],
+               income = [missing, 4200, 5100, missing, 3300],
+               city   = ["SP", "RJ", "BH", "SP", missing])
 
-sort(missingpairstats(df); by = r -> -r.phi)[1:5]  # most co-missing column pairs
+DataFrame(missingstats(df))                   # straight into a DataFrame
+filter(r -> r.pct > 20, missingstats(df))     # columns worse than 20% missing
+
+# most co-missing column pairs — `first` rather than `[1:5]`, which would
+# throw on a table with fewer than five pairs
+first(sort(missingpairstats(df); by = r -> -r.phi), 5)
 
 ps = missingpatternstats(df)
-filter(r -> r.pattern.age && !r.pattern.income, ps)
+filter(r -> r.pattern.age && !r.pattern.income, ps)   # age missing, income present
+filter(r -> r.nmissing == 0, ps)                      # the complete-case pattern
 
 rs = missingrowstats(df)
-only(r.nrows for r in rs if r.nmissing == 0)       # complete-case count
-sum(r.nrows for r in rs if r.nmissing > 0)         # rows lost to listwise deletion
+only(r.nrows for r in rs if r.nmissing == 0)  # complete-case count
+sum(r.nrows for r in rs if r.nmissing > 0)    # rows lost to listwise deletion
 ```
 
 `missingpairstats` returns **both** ϕ and Jaccard rather than selecting one
