@@ -7,6 +7,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+- DOI. Releases are archived on Zenodo; the concept DOI
+  [10.5281/zenodo.22217099](https://doi.org/10.5281/zenodo.22217099) covers
+  the software across all versions and v0.5.0's own snapshot is
+  [10.5281/zenodo.22217100](https://doi.org/10.5281/zenodo.22217100). Recorded
+  in `CITATION.cff` (concept DOI in `doi:`, version DOI under `identifiers:`)
+  and shown as a badge in the README.
+
 ### Changed
 - Documentation split from a single `index.md` into seven pages (Home,
   Heatmaps, Diagnostics, Data API, Export and output, Public API, Internals).

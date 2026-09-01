@@ -15,6 +15,13 @@ authors:
 repository-code: "https://github.com/dantebertuzzi/MissingPatterns.jl"
 url: "https://dantebertuzzi.github.io/MissingPatterns.jl/stable"
 license: MIT
+# Concept DOI: resolves to the most recent archived version. Cite this one
+# unless you specifically need to pin the version you actually used.
+doi: 10.5281/zenodo.22217099
+identifiers:
+  - type: doi
+    value: 10.5281/zenodo.22217100
+    description: Archived snapshot of version 0.5.0.
 keywords:
   - julia
   - missing data
@@ -23,4 +30,4 @@ keywords:
   - data quality
   - terminal
 version: 0.5.0
-date-released: 2026-08-31
+date-released: 2026-09-01

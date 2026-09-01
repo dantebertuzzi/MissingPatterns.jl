@@ -45,3 +45,11 @@ Every display above has a data counterpart that returns a Tables.jl-compatible
 row table instead of printing — see [Data API](@ref).
 
 Full docstrings are in the [Public API](@ref) reference.
+
+## Citation
+
+Every release is archived on Zenodo. Cite the concept DOI,
+[10.5281/zenodo.22217099](https://doi.org/10.5281/zenodo.22217099), which
+covers the software across all versions; use a release's own DOI to pin the
+exact version you ran. `CITATION.cff` in the repository carries the same
+metadata in machine-readable form.

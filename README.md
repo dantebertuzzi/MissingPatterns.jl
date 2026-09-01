@@ -14,7 +14,7 @@ zero plotting-library dependencies, pure Unicode/ANSI terminal rendering.
 [![Build Status](https://github.com/dantebertuzzi/MissingPatterns.jl/actions/workflows/CI.yml/badge.svg?branch=main)](https://github.com/dantebertuzzi/MissingPatterns.jl/actions/workflows/CI.yml?query=branch%3Amain)
 [![Coverage](https://coveralls.io/repos/github/dantebertuzzi/MissingPatterns.jl/badge.svg?branch=main)](https://coveralls.io/github/dantebertuzzi/MissingPatterns.jl?branch=main)
 [![JuliaHub](https://docs.juliahub.com/General/MissingPatterns/stable/version.svg)](https://juliahub.com/ui/Packages/General/MissingPatterns)
-[![DOI](https://zenodo.org/badge/940293931.svg)](https://zenodo.org/badge/latestdoi/940293931)
+[![DOI](https://zenodo.org/badge/DOI/10.5281/zenodo.22217099.svg)](https://doi.org/10.5281/zenodo.22217099)
 
 ## Installation
 
@@ -384,8 +384,24 @@ plotmissing(CSV.File("data.csv"))
 
 ## Citation
 
-Every release is archived on [Zenodo](https://zenodo.org/badge/latestdoi/940293931)
-with its own DOI; the DOI badge above always resolves to the most recent
-version. `CITATION.cff` in this repository holds the machine-readable
-metadata, which is what GitHub's *Cite this repository* button reads and what
-reference managers import.
+Every release is archived on Zenodo with its own DOI. Cite the **concept
+DOI**, [10.5281/zenodo.22217099](https://doi.org/10.5281/zenodo.22217099),
+which covers the software across all versions and always resolves to the most
+recent one — unless you need to pin the exact version you ran, in which case
+use that release's own DOI (v0.5.0 is
+[10.5281/zenodo.22217100](https://doi.org/10.5281/zenodo.22217100)).
+
+```bibtex
+@software{bertuzzi_missingpatterns,
+  author    = {Bertuzzi, Dante},
+  title     = {{MissingPatterns.jl}: terminal-based exploration of
+               missing data patterns in Julia},
+  publisher = {Zenodo},
+  doi       = {10.5281/zenodo.22217099},
+  url       = {https://doi.org/10.5281/zenodo.22217099}
+}
+```
+
+`CITATION.cff` holds the same metadata in machine-readable form — it is what
+GitHub's *Cite this repository* button reads and what reference managers
+import.
