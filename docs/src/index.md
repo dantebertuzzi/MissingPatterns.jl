@@ -67,8 +67,8 @@ Every release is archived on Zenodo. The repository ships a `CITATION.cff`
 Two DOIs coexist and are not interchangeable: the *concept DOI*
 [10.5281/zenodo.22217099](https://doi.org/10.5281/zenodo.22217099) identifies
 the project as a whole and always resolves to the newest version, while each
-release gets its own (0.5.0 is
-[10.5281/zenodo.22217100](https://doi.org/10.5281/zenodo.22217100)). **Cite
+release gets its own (0.5.1 is
+[10.5281/zenodo.22217708](https://doi.org/10.5281/zenodo.22217708)). **Cite
 the version you actually ran** — what the package reports has changed between
 releases. See the
 [README](https://github.com/dantebertuzzi/MissingPatterns.jl#how-to-cite) for

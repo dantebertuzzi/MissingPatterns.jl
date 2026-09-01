@@ -453,7 +453,7 @@ interchangeable:
 | DOI | What it identifies |
 |---|---|
 | [10.5281/zenodo.22217099](https://doi.org/10.5281/zenodo.22217099) | *Concept DOI* — the project as a whole. Always resolves to the newest version; it is what the badge at the top of this README points at. |
-| one per release | Each archived version gets its own — 0.5.0 is [10.5281/zenodo.22217100](https://doi.org/10.5281/zenodo.22217100). All of them are listed on the [Zenodo page](https://doi.org/10.5281/zenodo.22217099). |
+| one per release | Each archived version gets its own — 0.5.1 is [10.5281/zenodo.22217708](https://doi.org/10.5281/zenodo.22217708). All of them are listed on the [Zenodo page](https://doi.org/10.5281/zenodo.22217099). |
 
 The BibTeX above carries the concept DOI, so it keeps working across releases.
 **In a paper, swap it for the DOI of the version you used**: the concept DOI

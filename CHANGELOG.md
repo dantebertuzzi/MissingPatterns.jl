@@ -5,6 +5,15 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Changed
+- `CITATION.cff` and the README/docs DOI tables now name v0.5.1's archive,
+  [10.5281/zenodo.22217708](https://doi.org/10.5281/zenodo.22217708),
+  alongside the unchanged concept DOI. `identifiers:` lists the concept DOI
+  and the current version only — every release is archived separately and the
+  full list lives on the Zenodo page.
+
 ## [0.5.1] - 2026-09-01
 
 ### Fixed

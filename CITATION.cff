@@ -25,8 +25,10 @@ identifiers:
       Concept DOI — always resolves to the most recent
       version of MissingPatterns.jl.
   - type: doi
-    value: 10.5281/zenodo.22217100
-    description: DOI of version 0.5.0.
+    value: 10.5281/zenodo.22217708
+    description: DOI of version 0.5.1.
+    # Each release is archived separately; see the Zenodo page for the
+    # DOI of every other version.
 repository-code: "https://github.com/dantebertuzzi/MissingPatterns.jl"
 url: "https://dantebertuzzi.github.io/MissingPatterns.jl/stable/"
 keywords:
