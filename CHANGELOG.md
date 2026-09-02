@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.6.0] - 2026-09-02
+
 ### Added
 - `isna` — the predicate deciding what counts as an absent value, on every
   entry point (`plotmissing`, `missingpatterns`, `missingcooccurrence`,
