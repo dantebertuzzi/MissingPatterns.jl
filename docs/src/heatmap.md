@@ -31,7 +31,9 @@ plotmissing(tbl; name_width=6)
 | `name_width` | `4` | Column-name max chars (`0` = full name) |
 | `show_row_range` | `false` | Show row-number labels |
 | `by` | `nothing` | Name of a column — group rows by category or calendar period instead of position |
-| `period` | `nothing` | `nothing` (categorical grouping by `by`'s exact value), or `:year`, `:quarter`, `:month`, `:week`, `:day` for a `Date`/`DateTime` `by` column |
+| `period` | `nothing` | `nothing` (categorical grouping by `by`'s exact value), or `:year`, `:quarter`, `:month`, `:week` (ISO-8601), `:day` for a `Date`/`DateTime` `by` column |
+| `isna` | `ismissing` | Predicate deciding what counts as an absent value |
+| `order` | `:table` | Column order: `:table`, `:missing`, `:name` or `:cluster` |
 
 ### Grouping by category or by time
 
@@ -53,6 +55,70 @@ plotmissing(tbl2; by=:date, period=:day)
 ```
 
 Rows whose `by` value is `missing` form a trailing `∅` group in either mode.
+
+### Ordering the columns
+
+Columns are drawn in table order by default, which is an accident of how the
+file was written: columns that go missing together are usually scattered, and
+the block structure the plot exists to reveal is the hardest thing to see in
+it. `order` fixes that.
+
+```julia
+plotmissing(tbl; order=:cluster)   # co-missing columns side by side
+plotmissing(tbl; order=:missing)   # emptiest columns first
+plotmissing(tbl; order=:name)      # alphabetical
+```
+
+`:cluster` seriates the ϕ matrix of the missingness masks: it starts at the
+column with the most missing values and repeatedly appends the unplaced column
+most associated with the last one placed. Columns with no missing values carry
+no pattern and are appended at the end, so a complete column never splits a
+block in half. It costs one extra pass over the data to build the pattern
+table.
+
+Reordering is purely a display concern — every count, percentage and total is
+identical whatever the order. When columns are compressed, a reordered group is
+labeled by its endpoint names (`age-income`) rather than by positional indices
+(`3-7`), which would otherwise refer to display slots instead of to the table.
+
+### Sentinel values with `isna`
+
+Real microdata rarely uses `missing`. DATASUS, the TSE and most public
+statistical files code absence as a sentinel: `9`/`99` for "ignored", `""` for
+a blank field, sometimes `-1`. `isna` lets those count as holes without
+rewriting the table:
+
+```julia
+tbl = (idade = [34, 9, 51, 9], sexo = ["M", "", "F", "M"])
+
+plotmissing(tbl)                                             # nothing is missing
+plotmissing(tbl; isna = x -> ismissing(x) || x == 9 || x == "")
+```
+
+That form applies one predicate to every column, which is rarely what you
+want: a sentinel belongs to a *variable*, not to a table. `9` means "ignored"
+in a coded field but is a perfectly good age, and the blanket predicate above
+punches a hole in `idade` for every 9-year-old. Pass a `NamedTuple` (or a
+`Dict`) of per-column predicates instead, with `ismissing` assumed for any
+column left out:
+
+```julia
+plotmissing(tbl; isna = (idade = x -> ismissing(x) || x == 9,
+                         sexo  = x -> ismissing(x) || x == ""))
+```
+
+Naming a column the table does not have is an error rather than a silently
+ignored entry, so a typo surfaces instead of quietly showing a complete table.
+
+In either form, test `ismissing` first and let `||` short-circuit:
+`missing == 9` is `missing`, not `false`, and a bare `x == 9` would throw in a
+boolean context.
+
+The predicate reaches every count the package makes — the heatmap, the
+diagnostics, the data API and the `by` column, where a sentinel forms the `∅`
+group just as `missing` does. It is available on every entry point, including
+[`missingsummary`](@ref), [`missingpatterns`](@ref), [`missingdrop`](@ref) and
+[`missinghtml`](@ref).
 
 ## `plotmissingdiff` — Before/after comparison
 

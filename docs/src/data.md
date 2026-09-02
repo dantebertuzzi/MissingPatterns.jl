@@ -12,6 +12,7 @@ screen.
 | `missingpatternstats` | unique missingness pattern | `pattern` (a `NamedTuple` of `Bool` keyed by column), `nmissing`, `n`, `pct` |
 | `missingpairstats` | unordered pair of columns | `a`, `b`, `phi`, `jaccard`, `n11`, `n1`, `n2`, `nrows` |
 | `missingrowstats` | observed missing-count | `nmissing`, `nrows`, `pct` |
+| `missingdropstats` | column-drop step | `ndropped`, `dropped`, `ncols`, `complete`, `pct`, `cells` |
 
 ```julia
 using DataFrames
@@ -34,6 +35,19 @@ filter(r -> r.nmissing == 0, ps)                      # the complete-case patter
 rs = missingrowstats(df)
 only(r.nrows for r in rs if r.nmissing == 0)  # complete-case count
 sum(r.nrows for r in rs if r.nmissing > 0)    # rows lost to listwise deletion
+
+steps = missingdropstats(df)
+steps[argmax([r.cells for r in steps])]       # the most useful trade-off
+[r.dropped for r in steps if r.dropped !== nothing]   # the drop order
+```
+
+Every one of them takes `isna`, the predicate deciding what counts as absent
+(default: `ismissing`), so a table coding absence as `9` or `""` reads the same
+as one using `missing`:
+
+```julia
+missingstats(df; isna = x -> ismissing(x) || x == 9 || x == "")      # every column
+missingstats(df; isna = (criterio = x -> ismissing(x) || x == 9,))   # just this one
 ```
 
 `missingpairstats` returns **both** ϕ and Jaccard rather than selecting one

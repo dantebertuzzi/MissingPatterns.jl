@@ -25,13 +25,56 @@ using Dates
 using Tables
 
 export plotmissing, missingpatterns, missingcooccurrence, missingsummary,
-       plotmissingdiff, missinghtml, missingrows,
+       plotmissingdiff, missinghtml, missingrows, missingdrop,
        missingstats, missingpatternstats, missingpairstats, missingrowstats,
-       missingreport
+       missingdropstats, missingreport
 
 # =============================================================================
 # Validation & small pure helpers
 # =============================================================================
+
+"""
+    _isna_for(isna, colname::Symbol)
+
+Resolve the `isna` argument down to the predicate for one column.
+
+A bare predicate applies to every column. A `NamedTuple` or `AbstractDict`
+maps column names to predicates, with `ismissing` for any column it omits —
+necessary because a sentinel is a property of a *variable*, not of a table:
+`9` means "ignored" in a coded field but is a perfectly good age.
+
+Resolution happens once per column, on the dispatch-heavy side of the function
+barrier, so the predicate reaching the inner loop is still a concrete type the
+loop specializes on.
+"""
+@inline _isna_for(isna, ::Symbol) = isna
+@inline _isna_for(isna::NamedTuple, name::Symbol) = get(isna, name, ismissing)
+@inline function _isna_for(isna::AbstractDict, name::Symbol)
+    haskey(isna, name) && return isna[name]
+    k = String(name)
+    haskey(isna, k) && return isna[k]
+    return ismissing
+end
+
+_isna_names(isna::NamedTuple) = keys(isna)
+_isna_names(isna::AbstractDict) = keys(isna)
+
+"""
+    _check_isna(isna, colnames)
+
+Reject a per-column `isna` naming a column the table does not have. Silently
+ignoring the entry would leave the user staring at a plot that shows no
+missing data with no hint that their key was a typo.
+"""
+function _check_isna(isna, colnames::Vector{String})
+    (isna isa NamedTuple || isna isa AbstractDict) || return nothing
+    for k in _isna_names(isna)
+        String(k) in colnames || throw(ArgumentError(
+            "isna names column \"$k\", which is not in the table; available: " *
+            join(colnames, ", ")))
+    end
+    return nothing
+end
 
 function _validate_style_params(cell_chars, name_width)
     cell_chars > 0  || throw(ArgumentError("cell_chars must be positive, got $cell_chars"))
@@ -59,7 +102,10 @@ function _table_info(tbl)
         "input of type $(typeof(tbl)) is not a Tables.jl-compatible table " *
         "(DataFrame, CSV.File, NamedTuple of vectors, ...)"))
     cols = Tables.columns(tbl)
-    colnames = [String(n) for n in Tables.columnnames(cols)]
+    # `String[...]` rather than a bare comprehension: over a table with no
+    # columns the latter infers `Vector{Union{}}`, which fails every downstream
+    # `::Vector{String}` signature.
+    colnames = String[String(n) for n in Tables.columnnames(cols)]
     ncols = length(colnames)
     nrows = ncols == 0 ? 0 : length(Tables.getcolumn(cols, 1))
     return cols, colnames, nrows, ncols
@@ -262,7 +308,7 @@ struct MissingGridStats
 end
 
 """
-    _accumulate_column!(block_counts, col, rows_per_cell) -> Int
+    _accumulate_column!(block_counts, col, rows_per_cell, isna) -> Int
 
 Single pass over one DataFrame column, tallying missing values both into the
 per-row-block `block_counts` accumulator and into a running column total
@@ -273,13 +319,17 @@ heterogeneous DataFrame columns pays dynamic dispatch once per *column*, while
 everything inside this function specializes and compiles for that column's
 concrete type, giving fully type-stable, `@simd`-friendly scalar code with no
 `Union{T,Missing}` boxing in the hot inner loop.
+
+`isna` is taken as a type parameter so the predicate is baked into that
+specialization too: with the `ismissing` default the branch compiles away
+entirely for a column whose eltype admits no `Missing`.
 """
 @inline function _accumulate_column!(block_counts::AbstractVector{Int},
                                       col::AbstractVector,
-                                      rows_per_cell::Int)
+                                      rows_per_cell::Int, isna::F=ismissing) where {F}
     total = 0
     @inbounds for i in eachindex(col)
-        m = ismissing(col[i]) ? 1 : 0
+        m = isna(col[i]) ? 1 : 0
         total += m
         block_row = div(i - 1, rows_per_cell) + 1
         block_counts[block_row] += m
@@ -296,19 +346,43 @@ missing-value matrix. Memory footprint is `O(dr*dc + dc + dr)` — bounded by
 the *display* size (`max_rows × max_cols`), not by the data itself.
 Row-range labels are always built (they are at most `max_rows` tiny strings).
 """
-function compute_missing_stats(tbl; max_rows::Int, max_cols::Int)
-    return _compute_missing_stats(_table_info(tbl)...; max_rows, max_cols)
+function compute_missing_stats(tbl; max_rows::Int, max_cols::Int,
+                               isna::F=ismissing,
+                               colorder::Union{Nothing,Vector{Int}}=nothing) where {F}
+    return _compute_missing_stats(_table_info(tbl)...; max_rows, max_cols, isna, colorder)
 end
 
 # Kernel taking an already-resolved `_table_info` tuple, so callers that need
 # to resolve dimensions before deciding whether to call this (e.g.
 # `plotmissing`'s `layout=:auto`) don't pay for `Tables.columns(tbl)` twice.
+# Display-column `j` maps to source column `_cidx(colorder, j)`. `nothing`
+# means "table order", which keeps the no-reordering path free of an
+# indirection and of any allocation.
+@inline _cidx(::Nothing, j::Int) = j
+@inline _cidx(o::Vector{Int}, j::Int) = o[j]
+
+# Label for a column group spanning display columns `cs:ce`. In table order the
+# historic positional label (`"3-7"`) is unambiguous; once columns have been
+# reordered those numbers would refer to display slots rather than to the
+# table, so the endpoints' names are used instead.
+function _colgroup_label(src_colnames::Vector{String}, colorder, cs::Int, ce::Int)
+    cs == ce && return src_colnames[_cidx(colorder, cs)]
+    colorder === nothing && return string(cs, "-", ce)
+    return string(src_colnames[colorder[cs]], "-", src_colnames[colorder[ce]])
+end
+
 function _compute_missing_stats(cols, src_colnames::Vector{String}, nrows::Int,
-                                 ncols::Int; max_rows::Int, max_cols::Int)
+                                 ncols::Int; max_rows::Int, max_cols::Int,
+                                 isna::F=ismissing,
+                                 colorder::Union{Nothing,Vector{Int}}=nothing) where {F}
+    _check_isna(isna, src_colnames)
     needs_compression = nrows > max_rows || ncols > max_cols
 
-    rows_per_cell = needs_compression ? cld(nrows, min(nrows, max_rows)) : 1
-    cols_per_cell = needs_compression ? cld(ncols, min(ncols, max_cols)) : 1
+    # Compare against the cap directly rather than dividing by
+    # `min(nrows, max_rows)`: that divisor is 0 for a table with no rows, and
+    # `cld(0, 0)` throws. Same idiom as `_compute_missing_stats_grouped`.
+    rows_per_cell = nrows > max_rows ? cld(nrows, max_rows) : 1
+    cols_per_cell = ncols > max_cols ? cld(ncols, max_cols) : 1
     dr = cld(nrows, rows_per_cell)
     dc = cld(ncols, cols_per_cell)
 
@@ -317,9 +391,11 @@ function _compute_missing_stats(cols, src_colnames::Vector{String}, nrows::Int,
 
     for j in 1:ncols
         jc = div(j - 1, cols_per_cell) + 1
+        src = _cidx(colorder, j)
         col_missing_total[jc] += _accumulate_column!(view(block_counts, :, jc),
-                                                      Tables.getcolumn(cols, j),
-                                                      rows_per_cell)
+                                                      Tables.getcolumn(cols, src),
+                                                      rows_per_cell,
+                                                      _isna_for(isna, Symbol(src_colnames[src])))
     end
 
     missing_count = sum(col_missing_total)
@@ -333,8 +409,9 @@ function _compute_missing_stats(cols, src_colnames::Vector{String}, nrows::Int,
         cs = (jc - 1) * cols_per_cell + 1
         ce = min(jc * cols_per_cell, ncols)
         group_width = ce - cs + 1
-        col_header_pct[jc] = 100 * col_missing_total[jc] / (nrows * group_width)
-        colnames[jc] = cs == ce ? src_colnames[cs] : string(cs, "-", ce)
+        col_header_pct[jc] = nrows == 0 ? 0.0 :
+                             100 * col_missing_total[jc] / (nrows * group_width)
+        colnames[jc] = _colgroup_label(src_colnames, colorder, cs, ce)
         for ir in 1:dr
             rs = (ir - 1) * rows_per_cell + 1
             re = min(ir * rows_per_cell, nrows)
@@ -401,19 +478,22 @@ end
 # Fast path (ncols <= 64): one UInt64 per row, built via the same
 # function-barrier trick as `_accumulate_column!` — dynamic dispatch happens
 # once per column, the inner per-row loop is fully specialized/type-stable.
-@inline function _or_missing_bit!(keys::Vector{UInt64}, col::AbstractVector, bit::UInt64)
+@inline function _or_missing_bit!(keys::Vector{UInt64}, col::AbstractVector,
+                                   bit::UInt64, isna::F=ismissing) where {F}
     @inbounds for i in eachindex(col)
-        if ismissing(col[i])
+        if isna(col[i])
             keys[i] |= bit
         end
     end
     return nothing
 end
 
-function _pattern_keys_fast(cols, nrows::Int, ncols::Int)
+function _pattern_keys_fast(cols, colnames::Vector{String}, nrows::Int, ncols::Int,
+                             isna::F=ismissing) where {F}
     keys = zeros(UInt64, nrows)
     for j in 1:ncols
-        _or_missing_bit!(keys, Tables.getcolumn(cols, j), UInt64(1) << (j - 1))
+        _or_missing_bit!(keys, Tables.getcolumn(cols, j), UInt64(1) << (j - 1),
+                         _isna_for(isna, Symbol(colnames[j])))
     end
     return keys
 end
@@ -423,15 +503,25 @@ end
 # O(nrows*ncols) time as the fast path, just without the single-word packing
 # trick — a deliberate simplicity/performance tradeoff since wide (>64-column)
 # frames are a rare case for this package.
-function _pattern_keys_general(cols, nrows::Int, ncols::Int)
+function _pattern_keys_general(cols, colnames::Vector{String}, nrows::Int, ncols::Int,
+                                isna::F=ismissing) where {F}
     keys = [falses(ncols) for _ in 1:nrows]
     for j in 1:ncols
-        col = Tables.getcolumn(cols, j)
-        @inbounds for i in 1:nrows
-            keys[i][j] = ismissing(col[i])
-        end
+        _set_missing_bit!(keys, Tables.getcolumn(cols, j), j,
+                          _isna_for(isna, Symbol(colnames[j])))
     end
     return keys
+end
+
+# Function barrier for the general path, mirroring `_or_missing_bit!`: without
+# it the inner loop would read `col` as an `Any`-typed capture of the outer,
+# column-heterogeneous loop.
+@inline function _set_missing_bit!(keys::Vector{BitVector}, col::AbstractVector,
+                                    j::Int, isna::F=ismissing) where {F}
+    @inbounds for i in eachindex(col)
+        keys[i][j] = isna(col[i])
+    end
+    return nothing
 end
 
 @inline function _unpack_key!(dest::AbstractVector{Bool}, k::UInt64)
@@ -449,17 +539,19 @@ end
 end
 
 """
-    compute_pattern_stats(tbl) -> PatternStats
+    compute_pattern_stats(tbl; isna=ismissing) -> PatternStats
 
 Compute the unique row-wise missingness patterns of a Tables.jl-compatible
-`tbl` and their frequencies, sorted most-common first.
+`tbl` and their frequencies, sorted most-common first. `isna` is the
+"counts as absent" predicate (see [`plotmissing`](@ref)).
 """
-function compute_pattern_stats(tbl)
+function compute_pattern_stats(tbl; isna::F=ismissing) where {F}
     cols, colnames, nrows, ncols = _table_info(tbl)
+    _check_isna(isna, colnames)
 
     row_keys = ncols <= _PATTERN_KEY_BITS ?
-        _pattern_keys_fast(cols, nrows, ncols) :
-        _pattern_keys_general(cols, nrows, ncols)
+        _pattern_keys_fast(cols, colnames, nrows, ncols, isna) :
+        _pattern_keys_general(cols, colnames, nrows, ncols, isna)
 
     K = eltype(row_keys)
     counts = Dict{K,Int}()
@@ -1059,7 +1151,7 @@ end
                 max_rows=50, max_cols=20,
                 layout=:auto, target_lines=28, color=:auto,
                 missing_color="#f3a9a9", emphasis=:present,
-                by=nothing, period=nothing)
+                by=nothing, period=nothing, isna=ismissing, order=:table)
 
 Display a text-based heatmap of missing value patterns in any
 Tables.jl-compatible source (DataFrame, `CSV.File`, NamedTuple of vectors,
@@ -1092,7 +1184,9 @@ grouped into a single cell using a Unicode block-character gradient
   column's exact value — categorical grouping, works for any sortable
   column (`String`, `Symbol`, `Int`, ...). Set to `:year`, `:quarter`,
   `:month`, `:week` or `:day` to instead group by that calendar period of a
-  `Date`/`DateTime` `by` column.
+  `Date`/`DateTime` `by` column. `:week` follows ISO-8601, so its label
+  carries the ISO week-year, which at a year boundary can differ from the
+  calendar year (`2024-12-30` is `2025-W01`).
 
 # Arguments
 - `io::IO`: output stream (default: `stdout`).
@@ -1126,6 +1220,43 @@ grouped into a single cell using a Unicode block-character gradient
   colored field. With `:missing`, the ramp is inverted. In both modes, any
   block containing even one missing value renders in a shade visibly
   different from a fully-present block.
+- `isna`: what counts as an absent value (default: `ismissing`). Microdata
+  often codes absence as a sentinel rather than as `missing` — `9`/`99` for
+  "ignored", `""` for a blank field — and this lets those count as holes
+  without rewriting the table. Either a predicate applied to every column:
+
+  ```julia
+  plotmissing(df; isna = x -> ismissing(x) || x == 9 || x == "")
+  ```
+
+  or, better, a `NamedTuple`/`AbstractDict` of per-column predicates, with
+  `ismissing` assumed for any column left out:
+
+  ```julia
+  plotmissing(df; isna = (criterio = x -> ismissing(x) || x == 9,
+                          cid      = x -> ismissing(x) || x == ""))
+  ```
+
+  Prefer the per-column form. A sentinel belongs to a *variable*, not to a
+  table: `9` means "ignored" in a coded field but is a perfectly good age,
+  and a blanket predicate would punch holes in every column that happens to
+  hold the value. Naming a column the table does not have is an error, not a
+  silently ignored entry.
+
+  In either form, test `ismissing` first and let `||` short-circuit:
+  `missing == 9` is `missing`, not `false`, and would be an error in a
+  boolean context. The predicate applies to every count the package makes,
+  the `by` column included, so a sentinel there forms the `∅` group.
+- `order::Symbol`: column order (default: `:table`). `:table` keeps the
+  table's own order; `:missing` puts the emptiest columns first; `:name`
+  sorts alphabetically; `:cluster` places columns that go missing *together*
+  side by side, which is usually what makes a block structure visible at all
+  — table order scatters them. `:cluster` seriates the ϕ matrix and so costs
+  one extra pass over the data; columns with no missing values carry no
+  pattern and are appended at the end. Reordering is purely a display
+  concern and never changes a number. When columns are compressed, a
+  reordered group is labeled by its endpoint names rather than by positional
+  indices, which would otherwise refer to display slots.
 
 # Returns
 - `nothing`. The plot is written to `io`.
@@ -1140,7 +1271,8 @@ function plotmissing(io::IO, tbl; cell_chars::Int=5,
                      emphasis::Symbol=:present,
                      by::Union{Nothing,Symbol,AbstractString}=nothing,
                      period::Union{Symbol,Nothing}=nothing,
-                     char_width::Int=-1)
+                     isna::F=ismissing, order::Symbol=:table,
+                     char_width::Int=-1) where {F}
 
     if char_width != -1
         Base.depwarn(
@@ -1158,6 +1290,9 @@ function plotmissing(io::IO, tbl; cell_chars::Int=5,
         throw(ArgumentError("color must be :auto, :always or :never, got :$color"))
     emphasis in (:present, :missing) ||
         throw(ArgumentError("emphasis must be :present or :missing, got :$emphasis"))
+    order in _COLUMN_ORDERS ||
+        throw(ArgumentError("order must be one of " *
+                             join(map(o -> ":$o", _COLUMN_ORDERS), ", ") * ", got :$order"))
     target_lines >= _COMPACT_OVERHEAD + 1 ||
         throw(ArgumentError("target_lines must be at least $(_COMPACT_OVERHEAD + 1), got $target_lines"))
 
@@ -1167,6 +1302,8 @@ function plotmissing(io::IO, tbl; cell_chars::Int=5,
         return nothing
     end
 
+    colorder = _column_order(tbl, cols, src_colnames, ncols, order, isna)
+
     # Grouping by a temporal column only makes sense with visible labels.
     show_row_range = show_row_range || by !== nothing
 
@@ -1174,9 +1311,10 @@ function plotmissing(io::IO, tbl; cell_chars::Int=5,
     use_color = force_color === nothing ? _use_color(io) : force_color
 
     _stats(mr) = by === nothing ?
-        _compute_missing_stats(cols, src_colnames, nrows, ncols; max_rows=mr, max_cols) :
+        _compute_missing_stats(cols, src_colnames, nrows, ncols;
+                                max_rows=mr, max_cols, isna, colorder) :
         _compute_missing_stats_grouped(cols, src_colnames, nrows, ncols, by, period;
-                                        max_rows=mr, max_cols)
+                                        max_rows=mr, max_cols, isna, colorder)
 
     # Resolve :auto — classic fits iff its total height (grid rows + 3-line
     # header + 3 border lines + blank + 6-line summary = dr + 13) is within
@@ -1187,8 +1325,7 @@ function plotmissing(io::IO, tbl; cell_chars::Int=5,
     resolved = layout
     if layout === :auto
         if by === nothing
-            classic_dr = cld(nrows, nrows > max_rows || ncols > max_cols ?
-                                     cld(nrows, min(nrows, max_rows)) : 1)
+            classic_dr = cld(nrows, nrows > max_rows ? cld(nrows, max_rows) : 1)
             resolved = classic_dr + 13 <= target_lines ? :classic : :compact
         else
             stats = _stats(max_rows)
@@ -1238,7 +1375,8 @@ plotmissing(tbl; kwargs...) = plotmissing(stdout, tbl; kwargs...)
     missingpatterns([io::IO=stdout], tbl; max_patterns=20, cell_chars=5,
                      char_missing='█', char_present='░', name_width=4,
                      color_cells=false, missing_color="#f3a9a9",
-                     emphasis=:present, show_bar=true, min_pct=0.0)
+                     emphasis=:present, show_bar=true, min_pct=0.0,
+                     isna=ismissing)
 
 Display the unique row-wise missingness patterns found in a
 Tables.jl-compatible `tbl`, sorted by descending frequency — i.e. *which
@@ -1272,6 +1410,8 @@ imputation strategy. For a correlation-style view of the same question, see
 - `min_pct::Float64`: hide patterns matching fewer than this percentage of
   rows (default: `0.0` — show all). Hidden patterns are reported in the
   trailing summary line.
+- `isna`: predicate deciding what counts as an absent value
+  (default: `ismissing`), as in [`plotmissing`](@ref).
 
 # Returns
 - `nothing`. The table is written to `io`.
@@ -1280,7 +1420,8 @@ function missingpatterns(io::IO, tbl; max_patterns::Int=20,
                           cell_chars::Int=5, char_missing::Char='█', char_present::Char='░',
                           name_width::Int=4, color_cells::Bool=false,
                           missing_color::String="#f3a9a9", emphasis::Symbol=:present,
-                          show_bar::Bool=true, min_pct::Float64=0.0)
+                          show_bar::Bool=true, min_pct::Float64=0.0,
+                          isna::F=ismissing) where {F}
     _validate_style_params(cell_chars, name_width)
     max_patterns > 0 || throw(ArgumentError("max_patterns must be positive, got $max_patterns"))
     emphasis in (:present, :missing) ||
@@ -1294,7 +1435,7 @@ function missingpatterns(io::IO, tbl; max_patterns::Int=20,
         return nothing
     end
 
-    stats = compute_pattern_stats(tbl)
+    stats = compute_pattern_stats(tbl; isna)
     style = _make_render_style(io; cell_chars, char_missing, char_present, name_width,
                                 color_cells, missing_color, emphasis)
 
@@ -1335,7 +1476,15 @@ _period_key(::Missing, ::Val) = nothing
 _period_key(x::Dates.TimeType, ::Val{:year})    = Int(Dates.year(x))
 _period_key(x::Dates.TimeType, ::Val{:quarter}) = (Int(Dates.year(x)), Int(Dates.quarterofyear(x)))
 _period_key(x::Dates.TimeType, ::Val{:month})   = (Int(Dates.year(x)), Int(Dates.month(x)))
-_period_key(x::Dates.TimeType, ::Val{:week})    = (Int(Dates.year(x)), Int(Dates.week(x)))
+# `Dates.week` is the ISO-8601 week number, whose *week-year* can differ from
+# the calendar year at the turn of the year: 2024-12-30 is ISO 2025-W01, and
+# 2024-01-04 is ISO 2024-W01. Pairing the ISO week with `Dates.year` would give
+# both the key `(2024, 1)` and silently fold two groups a year apart into one.
+# The ISO week-year is the calendar year of that week's Thursday.
+function _period_key(x::Dates.TimeType, ::Val{:week})
+    d = Dates.Date(x)
+    return (Int(Dates.year(d + Dates.Day(4 - Dates.dayofweek(d)))), Int(Dates.week(d)))
+end
 _period_key(x::Dates.TimeType, ::Val{:day})     = Dates.Date(x)
 _period_key(x, ::Val) = throw(ArgumentError(
     "`by` column must contain Date/DateTime values (or missing), got $(typeof(x))"))
@@ -1349,7 +1498,8 @@ _period_label(::Nothing, ::Val)                   = _MISSING_GROUP_LABEL
 
 # Function barrier: comprehension over the concrete-eltype column gives a
 # tight Union-typed key vector without per-element dynamic dispatch.
-@inline _row_period_keys(col::AbstractVector, pv::Val) = [_period_key(x, pv) for x in col]
+@inline _row_period_keys(col::AbstractVector, pv::Val, isna::F=ismissing) where {F} =
+    [isna(x) ? nothing : _period_key(x, pv) for x in col]
 
 # Categorical grouping (period === nothing): the group key is the column
 # value itself — no calendar bucketing, just "group identical values
@@ -1357,7 +1507,8 @@ _period_label(::Nothing, ::Val)                   = _MISSING_GROUP_LABEL
 _category_label(k) = string(k)
 _category_label(::Nothing) = _MISSING_GROUP_LABEL
 
-@inline _row_category_keys(col::AbstractVector) = [ismissing(x) ? nothing : x for x in col]
+@inline _row_category_keys(col::AbstractVector, isna::F=ismissing) where {F} =
+    [isna(x) ? nothing : x for x in col]
 
 """
     _accumulate_column_grouped!(group_counts, col, gids) -> Int
@@ -1369,10 +1520,10 @@ loop specializes on the column's concrete eltype.
 """
 @inline function _accumulate_column_grouped!(group_counts::AbstractVector{Int},
                                               col::AbstractVector,
-                                              gids::Vector{Int})
+                                              gids::Vector{Int}, isna::F=ismissing) where {F}
     total = 0
     @inbounds for i in eachindex(col)
-        m = ismissing(col[i]) ? 1 : 0
+        m = isna(col[i]) ? 1 : 0
         total += m
         group_counts[gids[i]] += m
     end
@@ -1387,7 +1538,9 @@ column's values instead of by position. Two modes:
 
 - `period` is `:year`, `:quarter`, `:month`, `:week` or `:day`: `by` must
   hold `Date`/`DateTime` values, and rows are grouped by the calendar
-  period they fall in (groups sorted chronologically).
+  period they fall in (groups sorted chronologically). `:week` follows
+  ISO-8601, so the label carries the ISO *week-year*, which at the turn of
+  the year can differ from the calendar year (`2024-12-30` is `2025-W01`).
 - `period === nothing` (default): `by` is treated as a categorical column —
   rows are grouped by exact value (groups sorted with `isless`, so any
   `Real`, `AbstractString`, `Symbol`, etc. column works).
@@ -1399,8 +1552,11 @@ for periods, `A-C` for categories), with proportions weighted by each
 group's true row count — so unequal-sized groups never distort the picture.
 """
 function compute_missing_stats_grouped(tbl, by, period::Union{Symbol,Nothing}=nothing;
-                                        max_rows::Int, max_cols::Int)
-    return _compute_missing_stats_grouped(_table_info(tbl)..., by, period; max_rows, max_cols)
+                                        max_rows::Int, max_cols::Int,
+                                        isna::F=ismissing,
+                                        colorder::Union{Nothing,Vector{Int}}=nothing) where {F}
+    return _compute_missing_stats_grouped(_table_info(tbl)..., by, period;
+                                           max_rows, max_cols, isna, colorder)
 end
 
 # Kernel taking an already-resolved `_table_info` tuple — see
@@ -1408,18 +1564,22 @@ end
 function _compute_missing_stats_grouped(cols, src_colnames::Vector{String},
                                          nrows::Int, ncols::Int, by,
                                          period::Union{Symbol,Nothing};
-                                         max_rows::Int, max_cols::Int)
+                                         max_rows::Int, max_cols::Int,
+                                         isna::F=ismissing,
+                                         colorder::Union{Nothing,Vector{Int}}=nothing) where {F}
     period === nothing || period in (:year, :quarter, :month, :week, :day) ||
         throw(ArgumentError("period must be :year, :quarter, :month, :week, :day, " *
                              "or nothing (categorical grouping), got :$period"))
+    _check_isna(isna, src_colnames)
     byname = String(by)
     bidx = findfirst(==(byname), src_colnames)
     bidx === nothing && throw(ArgumentError(
         "`by` column \"$byname\" not found; available: $(join(src_colnames, ", "))"))
 
     bycol = Tables.getcolumn(cols, bidx)
-    rowkeys = period === nothing ? _row_category_keys(bycol) :
-                                    _row_period_keys(bycol, Val(period))
+    byna = _isna_for(isna, Symbol(byname))
+    rowkeys = period === nothing ? _row_category_keys(bycol, byna) :
+                                    _row_period_keys(bycol, Val(period), byna)
     label(k) = period === nothing ? _category_label(k) : _period_label(k, Val(period))
 
     # `rowkeys`'s eltype is `Union{K,Nothing}` for the concrete key type `K`
@@ -1450,9 +1610,11 @@ function _compute_missing_stats_grouped(cols, src_colnames::Vector{String},
     col_missing_total = zeros(Int, dc)
     for j in 1:ncols
         jc = div(j - 1, cols_per_cell) + 1
+        src = _cidx(colorder, j)
         col_missing_total[jc] += _accumulate_column_grouped!(view(group_counts, :, jc),
-                                                              Tables.getcolumn(cols, j),
-                                                              gids)
+                                                              Tables.getcolumn(cols, src),
+                                                              gids,
+                                                              _isna_for(isna, Symbol(src_colnames[src])))
     end
 
     missing_count = sum(col_missing_total)
@@ -1471,8 +1633,9 @@ function _compute_missing_stats_grouped(cols, src_colnames::Vector{String},
     for jc in 1:dc
         cs = (jc - 1) * cols_per_cell + 1
         ce = min(jc * cols_per_cell, ncols)
-        col_header_pct[jc] = 100 * col_missing_total[jc] / (nrows * (ce - cs + 1))
-        colnames[jc] = cs == ce ? src_colnames[cs] : string(cs, "-", ce)
+        col_header_pct[jc] = nrows == 0 ? 0.0 :
+                             100 * col_missing_total[jc] / (nrows * (ce - cs + 1))
+        colnames[jc] = _colgroup_label(src_colnames, colorder, cs, ce)
     end
 
     for ir in 1:dr
@@ -1510,6 +1673,104 @@ function _compute_missing_stats_grouped(cols, src_colnames::Vector{String},
 end
 
 # =============================================================================
+# STAGE 1c-bis — Calculation (pure, no IO): column ordering
+#
+# The heatmap draws columns in table order, which is an accident of how the
+# file was written: columns that go missing together are usually scattered, and
+# the pattern the plot exists to reveal is the one hardest to see. Reordering
+# is purely a display concern — it permutes which source column each display
+# column reads, and never touches the numbers.
+# =============================================================================
+
+const _COLUMN_ORDERS = (:table, :missing, :name, :cluster)
+
+"""
+    _seriate_columns(M, n1) -> Vector{Int}
+
+Greedy nearest-neighbour seriation of the columns under the association matrix
+`M` (ϕ of the missingness masks): start at the column with the most missing
+values, then repeatedly append the unplaced column most associated with the one
+just placed. This is the cheap, deterministic ordering that makes a block
+structure legible — columns that vanish together end up adjacent — without
+pulling in a clustering dependency for what is a one-dimensional layout
+problem.
+
+Columns with no missing values at all are held out of the walk and appended at
+the end in table order: they have no missingness pattern to sit next to, and ϕ
+against them is undefined, so letting them compete would park a blank column in
+the middle of the very block structure the ordering exists to expose.
+
+Among the remaining columns `NaN` counts as zero association. Ties break on the
+larger missing count, then on the lower column index, so the result never
+depends on iteration order.
+"""
+function _seriate_columns(M::Matrix{Float64}, n1::Vector{Int})
+    nc = length(n1)
+    active = [c for c in 1:nc if n1[c] > 0]
+    complete = [c for c in 1:nc if n1[c] == 0]
+    length(active) <= 2 && return vcat(active, complete)
+
+    assoc(a, b) = (v = M[a, b]; isnan(v) ? 0.0 : v)
+
+    placed = Set(complete)
+    order = Vector{Int}(undef, length(active))
+    # Start from the column carrying the most missingness: it anchors the
+    # densest end of the ramp, so the plot reads dense-to-sparse left to right.
+    first_col = active[argmax([(n1[c], -c) for c in active])]
+    order[1] = first_col
+    push!(placed, first_col)
+
+    for k in 2:length(active)
+        prev = order[k - 1]
+        best = 0
+        best_score = (-Inf, typemin(Int), typemin(Int))
+        for c in active
+            c in placed && continue
+            score = (assoc(prev, c), n1[c], -c)
+            if score > best_score
+                best_score = score
+                best = c
+            end
+        end
+        order[k] = best
+        push!(placed, best)
+    end
+    return vcat(order, complete)
+end
+
+"""
+    _column_order(tbl, cols, colnames, ncols, order, isna) -> Union{Nothing,Vector{Int}}
+
+Resolve an `order` keyword into a permutation of source-column indices, or
+`nothing` for `:table` (the identity, which the kernels take as a fast path).
+
+- `:table` — table order (`nothing`).
+- `:missing` — most missing values first; ties keep table order.
+- `:name` — alphabetical by column name.
+- `:cluster` — [`_seriate_columns`](@ref) over the ϕ matrix, so columns that go
+  missing together sit next to each other. Costs one extra pass over the data
+  to build the pattern table.
+"""
+function _column_order(tbl, cols, colnames::Vector{String}, ncols::Int,
+                        order::Symbol, isna::F) where {F}
+    order === :table && return nothing
+    ncols <= 1 && return nothing
+
+    if order === :name
+        return sortperm(colnames)
+    end
+
+    if order === :missing
+        counts = [_count_missing(Tables.getcolumn(cols, j),
+                                  _isna_for(isna, Symbol(colnames[j]))) for j in 1:ncols]
+        return sortperm(counts; rev=true)   # sortperm is stable: ties keep table order
+    end
+
+    M, _, n1, _ = compute_cooccurrence(tbl; method=:phi, isna)
+    return _seriate_columns(M, n1)
+end
+
+# =============================================================================
 # STAGE 1d — Calculation (pure, no IO): pairwise co-occurrence of missingness
 # =============================================================================
 
@@ -1534,11 +1795,11 @@ Methods:
 
 Degenerate pairs (a column with zero or all-missing rows) yield `NaN`.
 """
-function compute_cooccurrence(tbl; method::Symbol=:phi)
+function compute_cooccurrence(tbl; method::Symbol=:phi, isna::F=ismissing) where {F}
     method in (:phi, :jaccard) ||
         throw(ArgumentError("method must be :phi or :jaccard, got :$method"))
 
-    ps = compute_pattern_stats(tbl)
+    ps = compute_pattern_stats(tbl; isna)
     n, nc = ps.nrows, ps.ncols
     n1, n11 = _cooccurrence_counts(ps)
 
@@ -1621,7 +1882,7 @@ end
 """
     missingcooccurrence([io::IO=stdout], tbl; method=:phi, cell_chars=5,
                          name_width=4, color=:auto, missing_color="#f3a9a9",
-                         max_cols=20)
+                         max_cols=20, isna=ismissing)
 
 Display the pairwise co-occurrence matrix of missingness between columns —
 ϕ coefficient (default) or Jaccard index of the missing masks. High
@@ -1635,10 +1896,14 @@ reports how many were omitted. Diagonal cells are `—`; degenerate pairs
 
 Cell text is the coefficient (`-1.00`…`1.00`); with color enabled, cell
 intensity scales with `|value|` using `missing_color`.
+
+- `isna`: predicate deciding what counts as an absent value
+  (default: `ismissing`), as in [`plotmissing`](@ref).
 """
 function missingcooccurrence(io::IO, tbl; method::Symbol=:phi, cell_chars::Int=5,
                               name_width::Int=4, color::Symbol=:auto,
-                              missing_color::String="#f3a9a9", max_cols::Int=20)
+                              missing_color::String="#f3a9a9", max_cols::Int=20,
+                              isna::F=ismissing) where {F}
     _validate_style_params(cell_chars, name_width)
     color in (:auto, :always, :never) ||
         throw(ArgumentError("color must be :auto, :always or :never, got :$color"))
@@ -1650,7 +1915,7 @@ function missingcooccurrence(io::IO, tbl; method::Symbol=:phi, cell_chars::Int=5
         return nothing
     end
 
-    M, colnames, n1, n = compute_cooccurrence(tbl; method)
+    M, colnames, n1, n = compute_cooccurrence(tbl; method, isna)
 
     sel = collect(1:length(colnames))
     dropped = 0
@@ -1728,7 +1993,7 @@ const _SPARK_CHARS = ('▁', '▂', '▃', '▄', '▅', '▆', '▇', '█')
 
 """
     missingsummary([io::IO=stdout], tbl; bins=20, sortby=:missing,
-                    color=:auto, missing_color="#f3a9a9")
+                    color=:auto, missing_color="#f3a9a9", isna=ismissing)
 
 Per-column missing-data overview: name, element type, missing count, %,
 and a sparkline showing *where along the rows* the missing values
@@ -1743,9 +2008,12 @@ guarantee as `plotmissing`); a block with none renders blank.
   `:name`, or `:none` (table order).
 - `color::Symbol` / `missing_color::String`: as in [`plotmissing`](@ref);
   the sparkline colors bars by their missing fraction.
+- `isna`: predicate deciding what counts as an absent value
+  (default: `ismissing`), as in [`plotmissing`](@ref).
 """
 function missingsummary(io::IO, tbl; bins::Int=20, sortby::Symbol=:missing,
-                         color::Symbol=:auto, missing_color::String="#f3a9a9")
+                         color::Symbol=:auto, missing_color::String="#f3a9a9",
+                         isna::F=ismissing) where {F}
     bins > 0 || throw(ArgumentError("bins must be positive, got $bins"))
     sortby in (:missing, :name, :none) ||
         throw(ArgumentError("sortby must be :missing, :name or :none, got :$sortby"))
@@ -1758,6 +2026,7 @@ function missingsummary(io::IO, tbl; bins::Int=20, sortby::Symbol=:missing,
         return nothing
     end
 
+    _check_isna(isna, colnames)
     binsize = max(cld(nrows, bins), 1)
     nb = cld(nrows, binsize)
 
@@ -1766,7 +2035,8 @@ function missingsummary(io::IO, tbl; bins::Int=20, sortby::Symbol=:missing,
     types = Vector{String}(undef, ncols)
     for j in 1:ncols
         col = Tables.getcolumn(cols, j)
-        totals[j] = _accumulate_column!(view(counts, :, j), col, binsize)
+        totals[j] = _accumulate_column!(view(counts, :, j), col, binsize,
+                                         _isna_for(isna, Symbol(colnames[j])))
         types[j] = string(Base.nonmissingtype(eltype(col)))
     end
 
@@ -1830,12 +2100,12 @@ Row-aligned pass over one column of both tables: `resolved` counts cells
 missing before but present after (e.g. imputed), `introduced` the reverse.
 Same function-barrier pattern as every other hot loop in the package.
 """
-@inline function _diff_counts(b::AbstractVector, a::AbstractVector)
+@inline function _diff_counts(b::AbstractVector, a::AbstractVector, isna::F=ismissing) where {F}
     resolved = 0
     introduced = 0
     @inbounds for i in eachindex(b)
-        mb = ismissing(b[i])
-        ma = ismissing(a[i])
+        mb = isna(b[i])
+        ma = isna(a[i])
         resolved   += (mb && !ma) ? 1 : 0
         introduced += (!mb && ma) ? 1 : 0
     end
@@ -1859,7 +2129,8 @@ end
 """
     plotmissingdiff([io::IO=stdout], before, after; cell_chars=5, name_width=4,
                      max_cols=20, target_lines=28, color=:auto,
-                     missing_color="#f3a9a9", filled_color="#a9f3c1")
+                     missing_color="#f3a9a9", filled_color="#a9f3c1",
+                     isna=ismissing)
 
 Compare the missingness of two same-shaped tables — typically the same
 dataset before and after an imputation step, or two releases of a periodic
@@ -1876,11 +2147,15 @@ cell-level counts of resolved and introduced missing values, computed by a
 row-aligned pass (not from block averages).
 
 Both tables must have identical dimensions and column names, in order.
+
+- `isna`: predicate deciding what counts as an absent value
+  (default: `ismissing`), as in [`plotmissing`](@ref).
 """
 function plotmissingdiff(io::IO, before, after; cell_chars::Int=5, name_width::Int=4,
                           max_cols::Int=20, target_lines::Int=28, color::Symbol=:auto,
                           missing_color::String="#f3a9a9",
-                          filled_color::String="#a9f3c1")
+                          filled_color::String="#a9f3c1",
+                          isna::F=ismissing) where {F}
     _validate_style_params(cell_chars, name_width)
     color in (:auto, :always, :never) ||
         throw(ArgumentError("color must be :auto, :always or :never, got :$color"))
@@ -1903,8 +2178,8 @@ function plotmissingdiff(io::IO, before, after; cell_chars::Int=5, name_width::I
     halfblock = use_color
 
     eff_max_rows = _compact_max_rows(target_lines, halfblock)
-    sb = compute_missing_stats(before; max_rows=eff_max_rows, max_cols)
-    sa = compute_missing_stats(after;  max_rows=eff_max_rows, max_cols)
+    sb = compute_missing_stats(before; max_rows=eff_max_rows, max_cols, isna)
+    sa = compute_missing_stats(after;  max_rows=eff_max_rows, max_cols, isna)
     delta = sa.proportions .- sb.proportions
 
     worse  = _parse_hex(missing_color)
@@ -1913,7 +2188,8 @@ function plotmissingdiff(io::IO, before, after; cell_chars::Int=5, name_width::I
     resolved = 0
     introduced = 0
     for j in 1:ncb
-        r, i = _diff_counts(Tables.getcolumn(cb, j), Tables.getcolumn(ca, j))
+        r, i = _diff_counts(Tables.getcolumn(cb, j), Tables.getcolumn(ca, j),
+                            _isna_for(isna, Symbol(names_b[j])))
         resolved += r
         introduced += i
     end
@@ -1997,7 +2273,8 @@ _css_rgb(c::NTuple{3,Int}) = string("rgb(", c[1], ",", c[2], ",", c[3], ")")
 """
     missinghtml(tbl; max_rows=200, max_cols=60, missing_color="#f3a9a9",
                 emphasis=:present, title="Missing data",
-                by=nothing, period=nothing) -> String
+                by=nothing, period=nothing, isna=ismissing,
+                order=:table) -> String
     missinghtml(path::AbstractString, tbl; kwargs...) -> path
 
 Render the missing-data heatmap as a standalone HTML fragment (dark-themed
@@ -2010,7 +2287,7 @@ affords a much larger grid (defaults: 200×60 blocks).
 
 `by`/`period` group rows by a column's values instead of by position,
 exactly as in [`plotmissing`](@ref), so a grouped report reads the same in
-both media.
+both media. `isna` and `order` likewise behave exactly as they do there.
 
 The one-argument form returns the HTML `String`; the two-argument form
 writes it to `path` and returns the path.
@@ -2019,19 +2296,24 @@ function missinghtml(tbl; max_rows::Int=200, max_cols::Int=60,
                       missing_color::String="#f3a9a9", emphasis::Symbol=:present,
                       title::AbstractString="Missing data",
                       by::Union{Nothing,Symbol,AbstractString}=nothing,
-                      period::Union{Symbol,Nothing}=nothing)
+                      period::Union{Symbol,Nothing}=nothing,
+                      isna::F=ismissing, order::Symbol=:table) where {F}
     _validate_display_params(max_rows, max_cols)
     emphasis in (:present, :missing) ||
         throw(ArgumentError("emphasis must be :present or :missing, got :$emphasis"))
+    order in _COLUMN_ORDERS ||
+        throw(ArgumentError("order must be one of " *
+                             join(map(o -> ":$o", _COLUMN_ORDERS), ", ") * ", got :$order"))
 
-    _, _, nrows, ncols = _table_info(tbl)
+    cols, src_colnames, nrows, ncols = _table_info(tbl)
     if nrows == 0 || ncols == 0
         return "<div style=\"font-family:monospace\">Empty table — nothing to display</div>"
     end
 
+    colorder = _column_order(tbl, cols, src_colnames, ncols, order, isna)
     stats = by === nothing ?
-        compute_missing_stats(tbl; max_rows, max_cols) :
-        compute_missing_stats_grouped(tbl, by, period; max_rows, max_cols)
+        compute_missing_stats(tbl; max_rows, max_cols, isna, colorder) :
+        compute_missing_stats_grouped(tbl, by, period; max_rows, max_cols, isna, colorder)
     ramp = ColorRamp(_PRESENT_RGB, _parse_hex(missing_color), emphasis)
     missing_pct = 100 * stats.missing_count / stats.total_cells
 
@@ -2054,7 +2336,8 @@ function missinghtml(tbl; max_rows::Int=200, max_cols::Int=60,
     for i in 1:stats.dr, j in 1:stats.dc
         p = stats.proportions[i, j]
         tip = string(_html_escape(stats.colnames[j]), " · ",
-                     by === nothing ? "rows " : "", stats.row_labels[i], " · ",
+                     by === nothing ? "rows " : "",
+                     _html_escape(stats.row_labels[i]), " · ",
                      @sprintf("%.2f", 100p), "% missing")
         print(io, "<div style=\"width:14px;height:8px;background:",
               _css_rgb(_ramp_rgb(ramp, p)), "\" title=\"", tip, "\"></div>")
@@ -2098,16 +2381,16 @@ Missing-value tally for one column. Same function-barrier pattern as
 and this body specializes on the column's concrete eltype, so the inner loop
 is scalar and allocation-free with no `Union{T,Missing}` boxing.
 """
-@inline function _count_missing(col::AbstractVector)
+@inline function _count_missing(col::AbstractVector, isna::F=ismissing) where {F}
     n = 0
     @inbounds for i in eachindex(col)
-        n += ismissing(col[i]) ? 1 : 0
+        n += isna(col[i]) ? 1 : 0
     end
     return n
 end
 
 """
-    missingstats(tbl) -> Vector{<:NamedTuple}
+    missingstats(tbl; isna=ismissing) -> Vector{<:NamedTuple}
 
 Per-column missing-data statistics as a Tables.jl-compatible row table — the
 data behind [`missingsummary`](@ref), without the rendering.
@@ -2134,14 +2417,15 @@ filter(r -> r.pct > 20, missingstats(df))
 See also [`missingpatternstats`](@ref), [`missingpairstats`](@ref),
 [`missingrowstats`](@ref).
 """
-function missingstats(tbl)
+function missingstats(tbl; isna::F=ismissing) where {F}
     cols, colnames, nrows, ncols = _table_info(tbl)
+    _check_isna(isna, colnames)
     R = NamedTuple{(:column, :eltype, :nmissing, :npresent, :nrows, :pct),
                    Tuple{Symbol,Type,Int,Int,Int,Float64}}
     rows = Vector{R}(undef, ncols)
     for j in 1:ncols
         col = Tables.getcolumn(cols, j)
-        nm = _count_missing(col)
+        nm = _count_missing(col, _isna_for(isna, Symbol(colnames[j])))
         rows[j] = (column   = Symbol(colnames[j]),
                    eltype   = eltype(col),
                    nmissing = nm,
@@ -2153,7 +2437,7 @@ function missingstats(tbl)
 end
 
 """
-    missingpatternstats(tbl) -> Vector{<:NamedTuple}
+    missingpatternstats(tbl; isna=ismissing) -> Vector{<:NamedTuple}
 
 Unique row-wise missingness patterns as a Tables.jl-compatible row table —
 the data behind [`missingpatterns`](@ref), without the rendering and without
@@ -2185,8 +2469,8 @@ filter(r -> r.nmissing == 0, ps)  # the fully-complete pattern, if any
 
 See also [`missingstats`](@ref), [`missingpairstats`](@ref).
 """
-function missingpatternstats(tbl)
-    ps = compute_pattern_stats(tbl)
+function missingpatternstats(tbl; isna::F=ismissing) where {F}
+    ps = compute_pattern_stats(tbl; isna)
     return _pattern_rows(ps, Tuple(Symbol(c) for c in ps.colnames))
 end
 
@@ -2210,7 +2494,7 @@ function _pattern_rows(ps::PatternStats, names::NTuple{N,Symbol}) where {N}
 end
 
 """
-    missingpairstats(tbl) -> Vector{<:NamedTuple}
+    missingpairstats(tbl; isna=ismissing) -> Vector{<:NamedTuple}
 
 Pairwise co-occurrence of missingness as a Tables.jl-compatible row table —
 the data behind [`missingcooccurrence`](@ref), without the rendering and
@@ -2250,8 +2534,8 @@ filter(r -> r.n11 > 0 && r.jaccard > 0.5, pairs)
 
 See also [`missingstats`](@ref), [`missingpatternstats`](@ref).
 """
-function missingpairstats(tbl)
-    ps = compute_pattern_stats(tbl)
+function missingpairstats(tbl; isna::F=ismissing) where {F}
+    ps = compute_pattern_stats(tbl; isna)
     n, nc = ps.nrows, ps.ncols
     R = NamedTuple{(:a, :b, :phi, :jaccard, :n11, :n1, :n2, :nrows),
                    Tuple{Symbol,Symbol,Float64,Float64,Int,Int,Int,Int}}
@@ -2280,9 +2564,10 @@ end
 Add one column's missingness into the per-row tally. Function barrier again:
 specialized on the column's concrete eltype, so the loop stays scalar.
 """
-@inline function _accumulate_row!(per_row::Vector{Int}, col::AbstractVector)
+@inline function _accumulate_row!(per_row::Vector{Int}, col::AbstractVector,
+                                   isna::F=ismissing) where {F}
     @inbounds for i in eachindex(col)
-        per_row[i] += ismissing(col[i]) ? 1 : 0
+        per_row[i] += isna(col[i]) ? 1 : 0
     end
     return per_row
 end
@@ -2294,10 +2579,13 @@ Histogram of "missing values in this row", as a `ncols + 1` element vector
 indexed by `count + 1` (so `hist[1]` is the number of fully complete rows).
 Costs one `O(nrows)` `Int` buffer and a single pass per column.
 """
-function _missing_per_row_hist(cols, nrows::Int, ncols::Int)
+function _missing_per_row_hist(cols, colnames::Vector{String}, nrows::Int, ncols::Int,
+                               isna::F=ismissing) where {F}
+    _check_isna(isna, colnames)
     per_row = zeros(Int, nrows)
     for j in 1:ncols
-        _accumulate_row!(per_row, Tables.getcolumn(cols, j))
+        _accumulate_row!(per_row, Tables.getcolumn(cols, j),
+                         _isna_for(isna, Symbol(colnames[j])))
     end
     hist = zeros(Int, ncols + 1)
     @inbounds for i in 1:nrows
@@ -2307,7 +2595,7 @@ function _missing_per_row_hist(cols, nrows::Int, ncols::Int)
 end
 
 """
-    missingrowstats(tbl) -> Vector{<:NamedTuple}
+    missingrowstats(tbl; isna=ismissing) -> Vector{<:NamedTuple}
 
 Row-completeness distribution as a Tables.jl-compatible row table — the data
 behind [`missingrows`](@ref).
@@ -2328,13 +2616,13 @@ sum(r.nrows for r in rs if r.nmissing > 0)     # rows lost to listwise deletion
 
 See also [`missingstats`](@ref) for the transposed (per-column) view.
 """
-function missingrowstats(tbl)
-    cols, _, nrows, ncols = _table_info(tbl)
+function missingrowstats(tbl; isna::F=ismissing) where {F}
+    cols, colnames, nrows, ncols = _table_info(tbl)
     R = NamedTuple{(:nmissing, :nrows, :pct),Tuple{Int,Int,Float64}}
     rows = R[]
     (nrows == 0 || ncols == 0) && return rows
 
-    hist = _missing_per_row_hist(cols, nrows, ncols)
+    hist = _missing_per_row_hist(cols, colnames, nrows, ncols, isna)
     for k in 0:ncols
         h = hist[k + 1]
         h == 0 && continue
@@ -2349,7 +2637,7 @@ end
 
 """
     missingrows([io::IO=stdout], tbl; sortby=:nmissing, bar_width=30,
-                 color=:auto, missing_color="#f3a9a9")
+                 color=:auto, missing_color="#f3a9a9", isna=ismissing)
 
 Distribution of *how many values are missing per row*: how many rows are
 complete, how many are missing exactly one value, two, and so on.
@@ -2366,12 +2654,15 @@ complete-case count, everything below it is what `dropmissing` would discard.
 - `color::Symbol` / `missing_color::String`: as in [`plotmissing`](@ref);
   bars are tinted by severity (`nmissing / ncols`), so complete rows carry
   the "present" color and fully-missing rows the full missing color.
+- `isna`: predicate deciding what counts as an absent value
+  (default: `ismissing`), as in [`plotmissing`](@ref).
 
 Returns `nothing`; use [`missingrowstats`](@ref) for the same numbers as
 data.
 """
 function missingrows(io::IO, tbl; sortby::Symbol=:nmissing, bar_width::Int=30,
-                      color::Symbol=:auto, missing_color::String="#f3a9a9")
+                      color::Symbol=:auto, missing_color::String="#f3a9a9",
+                      isna::F=ismissing) where {F}
     sortby in (:nmissing, :rows) ||
         throw(ArgumentError("sortby must be :nmissing or :rows, got :$sortby"))
     color in (:auto, :always, :never) ||
@@ -2379,13 +2670,13 @@ function missingrows(io::IO, tbl; sortby::Symbol=:nmissing, bar_width::Int=30,
     bar_width > 0 ||
         throw(ArgumentError("bar_width must be positive, got $bar_width"))
 
-    cols, _, nrows, ncols = _table_info(tbl)
+    cols, colnames, nrows, ncols = _table_info(tbl)
     if nrows == 0 || ncols == 0
         println(io, "Empty table — nothing to display")
         return nothing
     end
 
-    hist = _missing_per_row_hist(cols, nrows, ncols)
+    hist = _missing_per_row_hist(cols, colnames, nrows, ncols, isna)
     ks = [k for k in 0:ncols if hist[k + 1] > 0]
     sortby === :rows && sort!(ks; by = k -> (-hist[k + 1], k))
 
@@ -2433,6 +2724,245 @@ end
 missingrows(tbl; kwargs...) = missingrows(stdout, tbl; kwargs...)
 
 # =============================================================================
+# STAGE 1f/2j — Listwise-deletion trade-off: which columns to drop
+#
+# `missingrows` answers "what would `dropmissing` cost me?" for the table as it
+# stands. The question that follows is the one an analyst actually acts on:
+# *which* columns are buying that cost, and what does complete-case analysis
+# look like without them. Dropping a column is free of rows but costs a
+# variable; dropping the right one can turn a 12%-complete table into a
+# 90%-complete one.
+#
+# The search runs on the deduplicated pattern table, never on the rows: a
+# pattern contributes its whole `count` to the complete-case total the moment
+# its last still-active missing column is dropped. Tracking one counter per
+# pattern makes each greedy step O(npatterns * ncols_left) with no re-scan of
+# the data, so the whole path costs O(npatterns * ncols^2) — on real tables,
+# where `npatterns` is a few dozen, this is negligible next to the single pass
+# that built the patterns.
+# =============================================================================
+
+"""
+    _drop_path(ps::PatternStats) -> (dropped::Vector{Int}, complete::Vector{Int})
+
+Greedy column-dropping path. `complete[k]` is the number of complete rows after
+the first `k - 1` drops (so `complete[1]` is the untouched complete-case count),
+and `dropped[k]` is the column removed at step `k`.
+
+At each step the column removed is the one that turns the most rows complete —
+i.e. the one that is the *sole* remaining missing column of the heaviest set of
+patterns. When no single column completes another row, the tie falls to the
+column with the most missing values (the one most likely to pay off once a
+later drop joins it), then to the lowest index, so the path is deterministic.
+
+The walk stops as soon as every row is complete, or when one column is left:
+past either point dropping more columns only discards information.
+"""
+function _drop_path(ps::PatternStats)
+    nc, np = ps.ncols, length(ps.counts)
+
+    # How many still-active columns are missing in each pattern; a pattern is
+    # complete-case exactly when this hits zero.
+    remaining = [count(@view ps.pattern_missing[p, :]) for p in 1:np]
+    col_missing = zeros(Int, nc)
+    complete_now = 0
+    for p in 1:np
+        remaining[p] == 0 && (complete_now += ps.counts[p])
+        for c in 1:nc
+            ps.pattern_missing[p, c] && (col_missing[c] += ps.counts[p])
+        end
+    end
+
+    complete = [complete_now]
+    dropped = Int[]
+    active = trues(nc)
+    nactive = nc
+
+    while complete[end] < ps.nrows && nactive > 1
+        gain = zeros(Int, nc)
+        for p in 1:np
+            remaining[p] == 1 || continue
+            # the single active column still missing here
+            for c in 1:nc
+                if active[c] && ps.pattern_missing[p, c]
+                    gain[c] += ps.counts[p]
+                    break
+                end
+            end
+        end
+
+        best = 0
+        best_score = (typemin(Int), typemin(Int), typemin(Int))
+        for c in 1:nc
+            active[c] || continue
+            score = (gain[c], col_missing[c], -c)
+            if score > best_score
+                best_score = score
+                best = c
+            end
+        end
+
+        active[best] = false
+        nactive -= 1
+        for p in 1:np
+            ps.pattern_missing[p, best] && (remaining[p] -= 1)
+        end
+        push!(dropped, best)
+        push!(complete, complete[end] + gain[best])
+    end
+
+    return dropped, complete
+end
+
+"""
+    missingdropstats(tbl; isna=ismissing) -> Vector{<:NamedTuple}
+
+The listwise-deletion trade-off as a Tables.jl-compatible row table — the data
+behind [`missingdrop`](@ref).
+
+Complete-case analysis discards every row with a missing value, and a single
+sparse column can be responsible for most of that loss. This walks the greedy
+path of column drops — at each step removing the column that turns the most
+rows complete — and reports what complete-case analysis looks like after each
+one, so the cost of keeping a column is expressed in the rows it costs.
+
+One row per step, starting from the untouched table, with fields:
+
+- `ndropped::Int` — columns dropped so far (`0` on the first row).
+- `dropped::Union{Nothing,Symbol}` — the column dropped at this step;
+  `nothing` on the first row, which is the table as given.
+- `ncols::Int` — columns left.
+- `complete::Int` — rows with no missing value among the columns left, i.e.
+  what `dropmissing` would keep.
+- `pct::Float64` — `100 * complete / nrows`.
+- `cells::Int` — `complete * ncols`, the size of the complete-case block that
+  survives. It rises while a drop buys more rows than it costs columns and
+  falls afterwards, so its maximum is the natural stopping point.
+
+The walk ends once every row is complete or one column is left. `isna` is the
+"counts as absent" predicate (see [`plotmissing`](@ref)).
+
+# Examples
+```julia
+using DataFrames
+df = DataFrame(a=[1, 2, missing, 4], b=[1, missing, missing, 4], c=[1, 2, 3, 4])
+
+DataFrame(missingdropstats(df))
+
+# the drop that leaves the largest complete-case block
+steps = missingdropstats(df)
+best = steps[argmax([r.cells for r in steps])]
+```
+
+See also [`missingrowstats`](@ref) for the distribution this optimizes against.
+"""
+function missingdropstats(tbl; isna::F=ismissing) where {F}
+    ps = compute_pattern_stats(tbl; isna)
+    R = NamedTuple{(:ndropped, :dropped, :ncols, :complete, :pct, :cells),
+                   Tuple{Int,Union{Nothing,Symbol},Int,Int,Float64,Int}}
+    rows = R[]
+    (ps.nrows == 0 || ps.ncols == 0) && return rows
+
+    dropped, complete = _drop_path(ps)
+    for k in eachindex(complete)
+        nleft = ps.ncols - (k - 1)
+        push!(rows, (ndropped = k - 1,
+                     dropped  = k == 1 ? nothing : Symbol(ps.colnames[dropped[k - 1]]),
+                     ncols    = nleft,
+                     complete = complete[k],
+                     pct      = 100 * complete[k] / ps.nrows,
+                     cells    = complete[k] * nleft))
+    end
+    return rows
+end
+
+"""
+    missingdrop([io::IO=stdout], tbl; bar_width=30, color=:auto,
+                 missing_color="#f3a9a9", isna=ismissing)
+
+Show what dropping columns buys complete-case analysis: at each step the column
+whose removal completes the most rows, and how many rows survive `dropmissing`
+once it is gone.
+
+Where [`missingrows`](@ref) prices listwise deletion for the table as it
+stands, this prices the alternative — trading a variable for rows — and names
+the variable worth trading. The `cells` column (`complete × columns left`)
+sizes the surviving complete-case block; the step that maximizes it is flagged,
+since past that point each drop costs more in columns than it returns in rows.
+
+# Arguments
+- `bar_width::Int`: width in characters of the longest bar (default: 30).
+- `color::Symbol` / `missing_color::String`: as in [`plotmissing`](@ref).
+- `isna`: predicate deciding what counts as absent (see [`plotmissing`](@ref)).
+
+Returns `nothing`; use [`missingdropstats`](@ref) for the same numbers as data.
+"""
+function missingdrop(io::IO, tbl; bar_width::Int=30, color::Symbol=:auto,
+                      missing_color::String="#f3a9a9", isna::F=ismissing) where {F}
+    color in (:auto, :always, :never) ||
+        throw(ArgumentError("color must be :auto, :always or :never, got :$color"))
+    bar_width > 0 ||
+        throw(ArgumentError("bar_width must be positive, got $bar_width"))
+
+    _, _, nrows, ncols = _table_info(tbl)
+    if nrows == 0 || ncols == 0
+        println(io, "Empty table — nothing to display")
+        return nothing
+    end
+
+    rows = missingdropstats(tbl; isna)
+
+    force_color = color === :auto ? nothing : (color === :always)
+    use_color = force_color === nothing ? _use_color(io) : force_color
+    ramp = ColorRamp(_PRESENT_RGB, _parse_hex(missing_color), :missing)
+    rst = use_color ? "\033[0m" : ""
+
+    best = rows[1]
+    for r in rows
+        r.cells > best.cells && (best = r)
+    end
+    dw = max(length("drop"), maximum(r -> r.dropped === nothing ? 1 : length(string(r.dropped)),
+                                      rows))
+    cw = max(length("cols"), length(string(ncols)))
+    rw = max(length("complete"), length(string(nrows)))
+
+    buf = IOBuffer()
+    println(buf, ' ', rpad("drop", dw), "  ", lpad("cols", cw), "  ",
+            lpad("complete", rw), "  ", lpad("%", 7), "  distribution")
+    for r in rows
+        label = r.dropped === nothing ? "—" : string(r.dropped)
+        print(buf, ' ', rpad(label, dw), "  ", lpad(string(r.ncols), cw), "  ",
+              lpad(string(r.complete), rw), "  ",
+              lpad(@sprintf("%.2f%%", r.pct), 7), "  ")
+        # Bars are scaled against the row count, not against the best step, so
+        # the column reads as "share of rows kept" on its own.
+        nblocks = clamp(round(Int, bar_width * r.complete / nrows), 0, bar_width)
+        # `k` columns dropped means `k` fewer variables: tint by what is gone.
+        use_color && write(buf, _fg_rgb(_ramp_rgb(ramp, r.ndropped / ncols)))
+        for _ in 1:nblocks
+            write(buf, '█')
+        end
+        use_color && write(buf, rst)
+        r === best && print(buf, "  ◀ most complete-case cells")
+        write(buf, '\n')
+    end
+
+    kept = ncols - best.ndropped
+    println(buf, ' ', rows[1].complete, " of ", nrows, " row",
+            nrows == 1 ? "" : "s", " complete as given (",
+            @sprintf("%.2f", rows[1].pct), "%) ┊ dropping ",
+            best.ndropped, " column", best.ndropped == 1 ? "" : "s",
+            " leaves ", best.complete, " complete across ", kept,
+            " column", kept == 1 ? "" : "s",
+            " (", @sprintf("%.2f", best.pct), "%)")
+
+    write(io, take!(buf))
+    return nothing
+end
+
+missingdrop(tbl; kwargs...) = missingdrop(stdout, tbl; kwargs...)
+
+# =============================================================================
 # STAGE 2i — Medium-aware report object
 #
 # `show(io, ::MIME"text/html", x)` cannot be attached to the caller's own
@@ -2444,10 +2974,10 @@ missingrows(tbl; kwargs...) = missingrows(stdout, tbl; kwargs...)
 const _REPORT_PLOT_KWARGS = (:cell_chars, :char_missing, :char_present, :name_width,
                              :color_cells, :show_row_range, :max_rows, :max_cols,
                              :layout, :target_lines, :color, :emphasis,
-                             :missing_color, :by, :period)
+                             :missing_color, :by, :period, :isna, :order)
 
 const _REPORT_HTML_KWARGS = (:max_rows, :max_cols, :missing_color, :emphasis,
-                             :title, :by, :period)
+                             :title, :by, :period, :isna, :order)
 
 """
     MissingReport
@@ -2478,8 +3008,9 @@ Unicode grid — with no `if` on the caller's side.
 Keyword arguments are those of `plotmissing` and `missinghtml`; each is
 forwarded only to the renderer that accepts it, so per-medium defaults
 (e.g. a `200×60` HTML grid vs a `50×20` terminal grid) are preserved unless
-you override them explicitly. An unknown keyword is an error at construction
-time, not at display time.
+you override them explicitly. `isna` and `order` reach both renderers, so a
+report reads the same in either medium. An unknown keyword is an error at
+construction time, not at display time.
 
 # Examples
 ```julia
@@ -2550,8 +3081,11 @@ if _HAS_PRECOMPILETOOLS
         missingcooccurrence(_io, _tbl)
         plotmissingdiff(_io, _tbl, _tbl)
         missingrows(_io, _tbl)
+        missingdrop(_io, _tbl)
         missinghtml(_tbl)
+        plotmissing(_io, _tbl; order=:cluster)
         missingstats(_tbl)
+        missingdropstats(_tbl)
         missingpatternstats(_tbl)
         missingpairstats(_tbl)
         missingrowstats(_tbl)

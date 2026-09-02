@@ -46,6 +46,7 @@ plotmissing(tbl)
 | [`missingcooccurrence`](#missingcooccurrence--pairwise-correlation-of-missingness) | Pairwise ϕ/Jaccard correlation of missingness masks |
 | [`plotmissingdiff`](#plotmissingdiff--beforeafter-comparison) | Before/after diff (e.g. auditing an imputation step) |
 | [`missingrows`](#missingrows--per-row-completeness) | *How many* values are missing per row (what listwise deletion costs) |
+| [`missingdrop`](#missingdrop--what-dropping-a-column-buys) | Which column to drop to buy back complete rows |
 | [`missinghtml`](#missinghtml--html-heatmap-export) | The heatmap as a standalone HTML fragment |
 | [`missingreport`](#missingreport--one-object-two-media) | The heatmap as an object that renders itself in terminal *or* HTML |
 
@@ -86,7 +87,9 @@ plotmissing(tbl; show_row_range=true)           # show original row ranges
 | `color_cells` | `false` | Apply the color ramp to classic-layout glyphs |
 | `show_row_range` | `false` | Show row-range (or period) labels on the left |
 | `by` | `nothing` | Name of a column — group rows by category or calendar period instead of position |
-| `period` | `nothing` | `nothing` (categorical grouping by `by`'s exact value), or `:year`, `:quarter`, `:month`, `:week`, `:day` for a `Date`/`DateTime` `by` column |
+| `period` | `nothing` | `nothing` (categorical grouping by `by`'s exact value), or `:year`, `:quarter`, `:month`, `:week` (ISO-8601), `:day` for a `Date`/`DateTime` `by` column |
+| `isna` | `ismissing` | Predicate deciding what counts as an absent value |
+| `order` | `:table` | Column order: `:table`, `:missing`, `:name` or `:cluster` |
 
 #### Layouts
 
@@ -120,6 +123,63 @@ values, sorted — works for any sortable column (`String`, `Symbol`, `Int`,
 ...). With `period` set to a calendar unit, groups are periods of a
 `Date`/`DateTime` column (e.g. `2004`, `2013-Q2`). Rows whose `by` value is
 `missing` form a trailing `∅` group either way.
+
+#### Ordering the columns
+
+Columns are drawn in table order by default — an accident of how the file was
+written, which usually scatters the columns that go missing together and hides
+the very structure the plot exists to show.
+
+```julia
+plotmissing(tbl; order=:cluster)   # co-missing columns side by side
+plotmissing(tbl; order=:missing)   # emptiest columns first
+plotmissing(tbl; order=:name)      # alphabetical
+```
+
+`:cluster` seriates the ϕ matrix of the missingness masks, starting at the
+column with the most missing values and repeatedly appending the unplaced
+column most associated with the last one placed. Columns with no missing values
+carry no pattern and go to the end, so a complete column never splits a block
+in half.
+
+Reordering is display-only: every count, percentage and total is identical
+whatever the order.
+
+#### Sentinel values with `isna`
+
+Real microdata rarely uses `missing`. DATASUS, the TSE and most public
+statistical files code absence as a sentinel: `9`/`99` for "ignored", `""` for
+a blank field. `isna` counts those as holes without rewriting the table:
+
+```julia
+tbl = (idade = [34, 9, 51, 9], sexo = ["M", "", "F", "M"])
+
+plotmissing(tbl)                                             # nothing is missing
+plotmissing(tbl; isna = x -> ismissing(x) || x == 9 || x == "")
+```
+
+That form applies one predicate to every column, which is rarely what you
+want: a sentinel belongs to a *variable*, not to a table. `9` means "ignored"
+in a coded field but is a perfectly good age, and the blanket predicate above
+punches a hole in `idade` for every 9-year-old. Pass a `NamedTuple` (or a
+`Dict`) of per-column predicates instead, with `ismissing` assumed for any
+column left out:
+
+```julia
+plotmissing(tbl; isna = (idade = x -> ismissing(x) || x == 9,
+                         sexo  = x -> ismissing(x) || x == ""))
+```
+
+Naming a column the table does not have is an error rather than a silently
+ignored entry, so a typo surfaces instead of quietly showing a complete table.
+
+In either form, test `ismissing` first and let `||` short-circuit:
+`missing == 9` is `missing`, not `false`, and a bare `x == 9` would throw in a
+boolean context.
+
+The predicate is available on **every** entry point — heatmap, diagnostics,
+data API, HTML export — and applies to the `by` column too, where a sentinel
+forms the `∅` group just as `missing` does.
 
 ### `missingpatterns` — Unique missingness patterns
 
@@ -225,6 +285,33 @@ missingrows(tbl; color=:always)
  3 complete rows (37.50%) ┊ 5 with ≥1 missing (62.50%) ┊ 3 distinct counts across 3 columns
 ```
 
+### `missingdrop` — What dropping a column buys
+
+`missingrows` prices listwise deletion for the table as it stands.
+`missingdrop` prices the alternative — trading a variable for rows — and names
+the variable worth trading. It walks the greedy path, at each step removing the
+column that turns the most rows complete.
+
+```julia
+missingdrop(tbl)
+missingdrop(tbl; bar_width=50)
+missingdrop(tbl; color=:always)
+```
+
+```
+ drop    cols  complete        %  distribution
+ —          5       626   62.60%  ███████████████████
+ lab        4       940   94.00%  ████████████████████████████  ◀ most complete-case cells
+ income     3       980   98.00%  █████████████████████████████
+ age        2      1000  100.00%  ██████████████████████████████
+ 626 of 1000 rows complete as given (62.60%) ┊ dropping 1 column leaves 940 complete across 4 columns (94.00%)
+```
+
+Dropping `lab` alone takes complete-case analysis from 626 rows to 940, at the
+price of one variable. The flag marks the step maximizing `complete × columns
+left` — the size of the surviving complete-case block. Whether that trade is
+worth making is a modeling judgment; the package only prices it.
+
 ### `missinghtml` — HTML heatmap export
 
 Renders the same heatmap and color ramp as `plotmissing` as a standalone,
@@ -277,6 +364,7 @@ read here can never disagree with the one drawn on screen.
 | `missingpatternstats` | unique missingness pattern | `pattern` (a `NamedTuple` of `Bool` keyed by column), `nmissing`, `n`, `pct` |
 | `missingpairstats` | unordered pair of columns | `a`, `b`, `phi`, `jaccard`, `n11`, `n1`, `n2`, `nrows` |
 | `missingrowstats` | observed missing-count | `nmissing`, `nrows`, `pct` |
+| `missingdropstats` | column-drop step | `ndropped`, `dropped`, `ncols`, `complete`, `pct`, `cells` |
 
 ```julia
 using DataFrames
@@ -380,10 +468,13 @@ plotmissing(CSV.File("data.csv"))
 - **Automatic compression** for large datasets, with enhanced sensitivity to subtle patterns
 - **Compact half-block layout** with truecolor gradients for IDE/Jupyter output cells
 - **Grouping** by category (any sortable column) or by calendar year/quarter/month/week/day
+- **Sentinel-aware** (`isna`) — count `9`, `99`, `""` or any other coded absence as missing, as public microdata does
+- **Column ordering** (`order=:cluster`) — put co-missing columns side by side so the block structure is visible
 - **Pattern detection** (`missingpatterns`) and **pairwise correlation** (`missingcooccurrence`) of missingness
 - **Before/after diffing** (`plotmissingdiff`) for auditing imputation steps
 - **Row-completeness distribution** (`missingrows`) — what listwise deletion costs
-- **Tables.jl data API** (`missingstats`, `missingpatternstats`, `missingpairstats`, `missingrowstats`) — every view also available as data
+- **Listwise-deletion trade-off** (`missingdrop`) — which column to drop to buy back complete rows
+- **Tables.jl data API** (`missingstats`, `missingpatternstats`, `missingpairstats`, `missingrowstats`, `missingdropstats`) — every view also available as data
 - **HTML export** (`missinghtml`) for reports and notebooks
 - **Medium-aware display** (`missingreport`) — terminal in the REPL, HTML in Jupyter/Pluto
 - **IO-customizable output** — render to `stdout`, a file, or an `IOBuffer`
@@ -403,7 +494,7 @@ APA and BibTeX. A [`CITATION.bib`](CITATION.bib) is also provided:
   title   = {{MissingPatterns.jl}: terminal-based exploration of missing
              data patterns in {Julia}},
   year    = {2026},
-  version = {0.5.1},
+  version = {0.6.0},
   doi     = {10.5281/zenodo.22217099},
   url     = {https://github.com/dantebertuzzi/MissingPatterns.jl},
   note    = {Julia package}
@@ -413,8 +504,10 @@ APA and BibTeX. A [`CITATION.bib`](CITATION.bib) is also provided:
 **Cite the version you used**, not "the latest". What the package reports is
 part of your result, and it has changed between releases: `plotmissing`'s
 `period` default became `nothing` in 0.4.0, the data API and `missingrows`
-arrived in 0.5.0, and `missingpairstats` reports ϕ and Jaccard side by side
-where `missingcooccurrence` shows one at a time. Run `pkg> status
+arrived in 0.5.0, `isna` and `missingdrop` in 0.6.0 — and 0.6.0 also fixed
+`period=:week`, which until then merged ISO weeks across a year boundary.
+`missingpairstats` reports ϕ and Jaccard side by side where
+`missingcooccurrence` shows one at a time. Run `pkg> status
 MissingPatterns` and use the number it prints.
 
 ### 2. Reproducibility

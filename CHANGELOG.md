@@ -7,6 +7,89 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+- `isna` — the predicate deciding what counts as an absent value, on every
+  entry point (`plotmissing`, `missingpatterns`, `missingcooccurrence`,
+  `missingsummary`, `missingrows`, `missingdrop`, `plotmissingdiff`,
+  `missinghtml`, `missingreport`, the whole data API and the calculation
+  kernels). It defaults to `ismissing`, so nothing changes unless you ask.
+  Public microdata rarely uses `missing`: DATASUS, the TSE and most
+  statistical files code absence as a sentinel — `9`/`99` for "ignored", `""`
+  for a blank field — and those tables previously read as fully complete.
+
+  ```julia
+  # one predicate for every column
+  plotmissing(df; isna = x -> ismissing(x) || x == 9 || x == "")
+
+  # or, preferably, per column — a NamedTuple or a Dict, with `ismissing`
+  # assumed for any column left out
+  plotmissing(df; isna = (criterio = x -> ismissing(x) || x == 9,
+                          cid      = x -> ismissing(x) || x == ""))
+  ```
+
+  Prefer the per-column form: a sentinel belongs to a variable, not to a
+  table. `9` means "ignored" in a coded field but is a perfectly good age,
+  and a blanket predicate punches holes in every column that happens to hold
+  the value. Naming a column the table does not have raises rather than being
+  silently ignored, so a typo cannot masquerade as a complete table.
+
+  Test `ismissing` first and let `||` short-circuit: `missing == 9` is
+  `missing`, not `false`. The predicate applies to every count the package
+  makes, the `by` column included, where a sentinel forms the `∅` group just
+  as `missing` does. Per-column resolution happens once per column, on the
+  dispatch-heavy side of the existing function barriers, and the predicate is
+  taken as a type parameter, so the inner loop specializes on it. That turned
+  out to make the default path *faster*, not slower: on a 200k×25 table
+  `compute_missing_stats` goes from 13.4 ms to 7.7 ms at identical allocations
+  (45 KB), because the predicate now reaches the loop as a compile-time
+  constant. Output is byte-identical to 0.5.1 across randomized tables.
+- `order` on `plotmissing` and `missinghtml` (and so on `missingreport`):
+  `:table` (default, unchanged), `:missing` (emptiest columns first), `:name`
+  (alphabetical) and `:cluster`. `:cluster` seriates the ϕ matrix so columns
+  that go missing *together* sit side by side — table order usually scatters
+  them, hiding the block structure the plot exists to show. Columns with no
+  missing values carry no pattern and are appended at the end, so a complete
+  column never splits a block in half. Reordering is display-only: no count,
+  percentage or total changes. When columns are compressed, a reordered group
+  is labeled by its endpoint names rather than by positional indices, which
+  would otherwise refer to display slots instead of to the table.
+- `missingdrop` and `missingdropstats` — the listwise-deletion trade-off.
+  `missingrows` prices complete-case analysis for the table as it stands;
+  these price the alternative and name the column worth trading. They walk
+  the greedy path — at each step dropping the column that turns the most rows
+  complete — and report what survives `dropmissing` after each drop, flagging
+  the step that maximizes `complete × columns left`. The search runs on the
+  deduplicated pattern table rather than on the rows, so the whole path costs
+  `O(npatterns * ncols^2)` with no re-scan of the data.
+
+### Fixed
+- `_table_info` inferred `Vector{Union{}}` for the column names of a table with
+  no columns, which failed the `::Vector{String}` signature of every kernel
+  that takes them. Reached only through the new per-column `isna` validation,
+  but the annotation was wrong for empty tables either way.
+- `period=:week` grouped rows by `(Dates.year, Dates.week)`. `Dates.week` is
+  the ISO-8601 week number, whose week-year can differ from the calendar year
+  at the turn of the year, so `2024-01-04` (ISO 2024-W01) and `2024-12-30`
+  (ISO 2025-W01) both produced the key `(2024, 1)` and were silently folded
+  into a single `2024-W01` group — two groups a year apart merged into one, on
+  a chart whose whole point is the time axis. The key now uses the ISO
+  week-year, so weekly grouping is correct across year boundaries and labels
+  read `2025-W01` for that December date. Affects `plotmissing`,
+  `missinghtml`, `missingreport` and `compute_missing_stats_grouped` with
+  `period=:week`; no other period was affected.
+- `missinghtml` escaped column names but not row labels. Under `by`, those
+  labels come straight from the data, so a value containing `"` closed the
+  cell's `title` attribute early and the rest of the value was parsed as
+  markup, corrupting the document. Row labels are now escaped like every other
+  interpolated string.
+- `compute_missing_stats` threw `DivideError` on a table with no rows and more
+  than `max_cols` columns: compression was triggered by the column count, and
+  the row divisor `min(nrows, max_rows)` was then zero. It now compares
+  against the cap directly — the same idiom the grouped kernel already used —
+  and reports `0.0` rather than `NaN` for the per-column header percentage of
+  an empty table. The exported entry points all guard against empty tables, so
+  this only affected direct calls to the calculation kernel.
+
 ### Changed
 - `CITATION.cff` and the README/docs DOI tables now name v0.5.1's archive,
   [10.5281/zenodo.22217708](https://doi.org/10.5281/zenodo.22217708),

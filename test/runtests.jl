@@ -11,7 +11,8 @@ using MissingPatterns: _parse_hex, _ramp_rgb, _blend, ColorRamp, _PRESENT_RGB,
                         _bar_cell!, _compact_header_text, _make_render_style,
                         render_grid!, render_summary!, render_grid_compact!,
                         render_summary_compact!, render_pattern_table!,
-                        _prop_to_char
+                        _prop_to_char, _seriate_columns, _column_order,
+                        _MISSING_GROUP_LABEL
 using MissingPatterns: Tables
 
 const ANSI_RE = r"\e\[[0-9;]*m"
@@ -170,6 +171,25 @@ end
         @test stats3.dr == n && stats3.dc <= 10
         @test stats3.cols_per_cell > 1
         @test occursin('-', stats3.colnames[2])
+
+        # A table with no rows still trips `needs_compression` when it is wider
+        # than `max_cols`; deriving `rows_per_cell` from `min(nrows, max_rows)`
+        # then divided by zero.
+        wide_empty = NamedTuple{Tuple(Symbol("c", j) for j in 1:25)}(
+            Tuple(Int[] for _ in 1:25))
+        se = compute_missing_stats(wide_empty; max_rows=50, max_cols=20)
+        @test se.nrows == 0 && se.ncols == 25
+        @test se.dr == 0 && se.dc <= 20
+        @test se.rows_per_cell == 1 && se.cols_per_cell > 1
+        @test se.missing_count == 0 && se.total_cells == 0
+        @test all(iszero, se.col_header_pct)   # not NaN
+        @test isempty(se.row_labels)
+
+        # same shape through the grouped kernel
+        sge = compute_missing_stats_grouped((g = String[], v = Int[]), :g, nothing;
+                                             max_rows=50, max_cols=20)
+        @test sge.dr == 0
+        @test all(iszero, sge.col_header_pct)
     end
 
     # =========================================================================
@@ -541,6 +561,23 @@ end
         sw = compute_missing_stats_grouped(tbl, :date, :week; max_rows=50, max_cols=20)
         @test any(l -> occursin("W", l), sw.row_labels)
 
+        # ISO-8601 week-year: 2024-01-04 is 2024-W01 and 2024-12-30 is 2025-W01.
+        # Labelling the latter with its *calendar* year would give both the key
+        # (2024, 1) and collapse two groups a year apart into one.
+        isow = (date = [Date(2024, 1, 4), Date(2024, 12, 30)], v = [1, missing])
+        siso = compute_missing_stats_grouped(isow, :date, :week; max_rows=50, max_cols=20)
+        @test siso.dr == 2
+        @test siso.row_labels == ["2024-W01", "2025-W01"]
+        # groups stay in chronological order, and each keeps its own data
+        jv = findfirst(==("v"), siso.colnames)
+        @test siso.proportions[1, jv] == 0.0
+        @test siso.proportions[2, jv] == 1.0
+
+        # a Sunday (2023-01-01) belongs to the *previous* ISO week-year
+        sun = compute_missing_stats_grouped((date = [Date(2023, 1, 1)], v = [1]),
+                                             :date, :week; max_rows=50, max_cols=20)
+        @test sun.row_labels == ["2022-W52"]
+
         @test_throws ArgumentError compute_missing_stats_grouped(tbl, :nope, :year;
                                                                   max_rows=50, max_cols=20)
         @test_throws ArgumentError compute_missing_stats_grouped((a=[1, 2],), :a, :year;
@@ -793,6 +830,26 @@ end
 
         html_empty = missinghtml((a=[1,2], b=[3,4]))
         @test occursin("rgb(48,48,54)", html_empty) || occursin("rgb(243", html_empty)
+
+        # Row labels are data under `by`, so they must be escaped like column
+        # names: an unescaped quote would close the `title` attribute early and
+        # let the rest of the value become markup.
+        evil = (grp = ["a\" onmouseover=x <b>", "ok"], v = [missing, 1])
+        html_evil = missinghtml(evil; by=:grp)
+        # the payload survives as inert *text* inside the attribute value, but
+        # never as markup: the quote that would have closed `title` is escaped
+        @test !occursin("\" onmouseover", html_evil)
+        @test occursin("&quot; onmouseover", html_evil)
+        @test occursin("&lt;b&gt;", html_evil)
+        # every attribute stays balanced: an even number of quotes per tag
+        for tag in eachmatch(r"<div[^>]*>", html_evil)
+            @test iseven(count(==('"'), tag.match))
+        end
+
+        # column names reach the same tooltip and are escaped too
+        html_col = missinghtml((var"a<b" = [1, missing],))
+        @test !occursin("<b\"", html_col)
+        @test occursin("a&lt;b", html_col)
     end
 
     # =========================================================================
@@ -1178,6 +1235,288 @@ end
     # caught `[1:5]` indexing into a 3-element result and a `pattern.age`
     # lookup against a table whose columns were named A/B/C.
     # =========================================================================
+    # =========================================================================
+    # isna: what counts as an absent value
+    # =========================================================================
+    @testset "isna predicate" begin
+        # Microdata style: 9 = "ignored", "" = blank field. Nothing here is
+        # `missing`, so the default predicate must see a fully complete table.
+        tbl = (idade = [34, 9, 51, 9],
+               sexo  = ["M", "", "F", "M"],
+               uf    = ["SP", "RJ", "MG", "BA"])
+        na(x) = ismissing(x) || x == 9 || x == ""
+
+        @test all(r -> r.nmissing == 0, missingstats(tbl))
+
+        st = missingstats(tbl; isna=na)
+        @test [r.nmissing for r in st] == [2, 1, 0]
+        @test [r.npresent for r in st] == [2, 3, 4]
+        @test st[1].pct == 50.0
+
+        # every entry point honours it
+        @test occursin("50%", strip_ansi(rendered(plotmissing, tbl; isna=na, color=:never)))
+        @test occursin("2", strip_ansi(rendered(missingsummary, tbl; isna=na, color=:never)))
+        @test occursin("25.00%", rendered(missingrows, tbl; isna=na, color=:never))
+        @test occursin("n = 4 rows", rendered(missingcooccurrence, tbl; isna=na, color=:never))
+        @test occursin("idade: 50% missing", missinghtml(tbl; isna=na))
+        @test !occursin("idade: 50% missing", missinghtml(tbl))
+
+        # the row/pattern/pair views agree with each other
+        rs = missingrowstats(tbl; isna=na)
+        @test sum(r.nrows for r in rs) == 4
+        @test only(r.nrows for r in rs if r.nmissing == 0) == 2
+        @test sum(r.n for r in missingpatternstats(tbl; isna=na)) == 4
+        pair = only(r for r in missingpairstats(tbl; isna=na)
+                    if r.a === :idade && r.b === :sexo)
+        @test pair.n1 == 2 && pair.n2 == 1 && pair.n11 == 1
+
+        # sentinels in the `by` column form the ∅ group, like `missing` does
+        gt = (g = ["a", 9, "a", "b"], v = [1, 2, 3, 4])
+        sg = compute_missing_stats_grouped(gt, :g, nothing; max_rows=50, max_cols=20,
+                                            isna=na)
+        @test _MISSING_GROUP_LABEL in sg.row_labels
+
+        # `missing` and a sentinel can be counted together
+        mixed = (a = [1, missing, 9, 4],)
+        @test only(missingstats(mixed; isna=na)).nmissing == 2
+        @test only(missingstats(mixed)).nmissing == 1
+
+        # plotmissingdiff: auditing a recode of 9 -> missing
+        before = (a = [1, 9, 3],)
+        after  = (a = [1, 2, 3],)
+        out = rendered(plotmissingdiff, before, after; isna=na, color=:never)
+        @test occursin("resolved 1", out) && occursin("introduced 0", out)
+
+        # missingreport forwards it to both media
+        r = missingreport(tbl; isna=na)
+        @test occursin("50%", strip_ansi(sprint(show, MIME"text/plain"(), r)))
+        @test occursin("idade: 50% missing", sprint(show, MIME"text/html"(), r))
+
+        # the default is exactly `ismissing`
+        plain = (a = [1, missing, 3],)
+        @test rendered(plotmissing, plain; color=:never) ==
+              rendered(plotmissing, plain; isna=ismissing, color=:never)
+
+        # a custom predicate keeps the kernels type-stable
+        @test @inferred(compute_missing_stats(tbl; max_rows=50, max_cols=20,
+                                               isna=na)) isa MissingPatterns.MissingGridStats
+        @test @inferred(compute_pattern_stats(tbl; isna=na)) isa MissingPatterns.PatternStats
+    end
+
+    # =========================================================================
+    # per-column isna: a sentinel belongs to a variable, not to a table
+    # =========================================================================
+    @testset "isna per column" begin
+        # 9 is "ignored" in `criterio`, but a valid age in `idade` and a valid id
+        tbl = (id       = [7, 8, 9, 10],
+               idade    = [9, 34, 51, 9],
+               criterio = [1, 9, 1, 9],
+               cid      = ["A81", "", "A81", "B02"])
+
+        # one predicate for the whole table punches holes everywhere the value
+        # happens to appear — the trap the per-column form exists to avoid
+        blanket = x -> ismissing(x) || x == 9 || x == ""
+        @test [r.nmissing for r in missingstats(tbl; isna=blanket)] == [1, 2, 2, 1]
+
+        percol = (criterio = x -> ismissing(x) || x == 9,
+                  cid      = x -> ismissing(x) || x == "")
+        @test [r.nmissing for r in missingstats(tbl; isna=percol)] == [0, 0, 2, 1]
+
+        # a Dict works too, keyed by Symbol or by String
+        @test [r.nmissing for r in
+               missingstats(tbl; isna=Dict(:criterio => x -> ismissing(x) || x == 9))] ==
+              [0, 0, 2, 0]
+        @test [r.nmissing for r in
+               missingstats(tbl; isna=Dict("cid" => x -> ismissing(x) || x == ""))] ==
+              [0, 0, 0, 1]
+
+        # columns left out fall back to `ismissing`
+        withmiss = (a = [1, missing], b = [9, 9])
+        @test [r.nmissing for r in
+               missingstats(withmiss; isna=(b = x -> x == 9,))] == [1, 2]
+
+        # every view agrees
+        @test occursin("50.00%", rendered(missingrows, tbl; isna=percol, color=:never))
+        @test sum(r.n for r in missingpatternstats(tbl; isna=percol)) == 4
+        @test occursin("2", strip_ansi(rendered(missingsummary, tbl; isna=percol,
+                                                 color=:never)))
+        @test occursin("crit", strip_ansi(rendered(plotmissing, tbl; isna=percol,
+                                                    color=:never, name_width=0)))
+        @test missingdropstats(tbl; isna=percol)[1].complete == 2   # rows 1 and 3
+
+        # the `by` column resolves its own predicate
+        gt = (g = [1, 9, 1], v = [4, 5, 6])
+        sg = compute_missing_stats_grouped(gt, :g, nothing; max_rows=50, max_cols=20,
+                                            isna=(g = x -> ismissing(x) || x == 9,))
+        @test _MISSING_GROUP_LABEL in sg.row_labels
+        # ... and a predicate scoped to another column leaves `by` alone
+        sg2 = compute_missing_stats_grouped(gt, :g, nothing; max_rows=50, max_cols=20,
+                                             isna=(v = x -> ismissing(x) || x == 9,))
+        @test !(_MISSING_GROUP_LABEL in sg2.row_labels)
+
+        # naming a column the table lacks is an error, not a silent no-op
+        for f in (() -> missingstats(tbl; isna=(nope = ismissing,)),
+                  () -> missingrowstats(tbl; isna=(nope = ismissing,)),
+                  () -> missingdropstats(tbl; isna=(nope = ismissing,)),
+                  () -> plotmissing(IOBuffer(), tbl; isna=(nope = ismissing,)),
+                  () -> missingpatterns(IOBuffer(), tbl; isna=(nope = ismissing,)),
+                  () -> missingsummary(IOBuffer(), tbl; isna=(nope = ismissing,)),
+                  () -> missingrows(IOBuffer(), tbl; isna=(nope = ismissing,)),
+                  () -> missinghtml(tbl; isna=Dict("nope" => ismissing)))
+            @test_throws ArgumentError f()
+        end
+        err = try
+            missingstats(tbl; isna=(nope = ismissing,))
+        catch e
+            sprint(showerror, e)
+        end
+        @test occursin("nope", err) && occursin("criterio", err)
+    end
+
+    # =========================================================================
+    # order: column ordering
+    # =========================================================================
+    @testset "column order" begin
+        # a/b go missing together, d/e go missing together, z never does —
+        # and the table interleaves them so table order hides the structure
+        n = 30
+        ab = [i % 3 == 0 ? missing : i for i in 1:n]
+        de = [i % 5 == 0 ? missing : i for i in 1:n]
+        tbl = (a = copy(ab), d = copy(de), b = copy(ab), e = copy(de), z = collect(1:n))
+
+        names_of(o) = compute_missing_stats(tbl; max_rows=50, max_cols=20,
+                                             colorder=_column_order(tbl, Tables.columns(tbl),
+                                                                     ["a","d","b","e","z"], 5,
+                                                                     o, ismissing)).colnames
+
+        @test names_of(:table) == ["a", "d", "b", "e", "z"]
+        @test names_of(:name) == ["a", "b", "d", "e", "z"]
+        # :missing — a/b have more holes than d/e; z has none and goes last
+        @test names_of(:missing) == ["a", "b", "d", "e", "z"]
+        # :cluster — co-missing columns adjacent, complete column pushed to the end
+        cl = names_of(:cluster)
+        @test cl[end] == "z"
+        @test abs(findfirst(==("a"), cl) - findfirst(==("b"), cl)) == 1
+        @test abs(findfirst(==("d"), cl) - findfirst(==("e"), cl)) == 1
+
+        # :table is the identity, and resolves to `nothing` (the fast path)
+        @test _column_order(tbl, Tables.columns(tbl), ["a","d","b","e","z"], 5,
+                            :table, ismissing) === nothing
+
+        # reordering is display-only: every total is untouched
+        base = compute_missing_stats(tbl; max_rows=50, max_cols=20)
+        for o in (:missing, :name, :cluster)
+            s = compute_missing_stats(tbl; max_rows=50, max_cols=20,
+                                       colorder=_column_order(tbl, Tables.columns(tbl),
+                                                               ["a","d","b","e","z"], 5,
+                                                               o, ismissing))
+            @test s.missing_count == base.missing_count
+            @test s.total_cells == base.total_cells
+            @test sum(s.col_header_pct) ≈ sum(base.col_header_pct)
+            @test sort(s.colnames) == sort(base.colnames)
+        end
+
+        # the rendered plot puts the clustered pair side by side
+        out = strip_ansi(rendered(plotmissing, tbl; order=:cluster, color=:never,
+                                   name_width=0, max_rows=4))
+        header = split(out, '\n')[4]
+        @test findfirst("a", header)[1] < findfirst("z", header)[1]
+
+        # compressed groups: positional labels in table order, names once reordered
+        wide = bigtable(6, 12; miss_every=3)
+        s_tab = compute_missing_stats(wide; max_rows=50, max_cols=4)
+        @test occursin(r"^\d+-\d+$", s_tab.colnames[1])
+        s_ord = compute_missing_stats(wide; max_rows=50, max_cols=4,
+                                       colorder=collect(12:-1:1))
+        @test occursin("c", s_ord.colnames[1])   # endpoint names, not slot indices
+
+        # html takes it too, and validates it
+        @test occursin("<div", missinghtml(tbl; order=:cluster))
+        @test_throws ArgumentError plotmissing(IOBuffer(), tbl; order=:nope)
+        @test_throws ArgumentError missinghtml(tbl; order=:nope)
+
+        # seriation is deterministic and a permutation
+        M, _, n1, _ = compute_cooccurrence(tbl)
+        p1 = _seriate_columns(M, n1)
+        @test sort(p1) == collect(1:5)
+        @test p1 == _seriate_columns(M, n1)
+
+        # degenerate inputs
+        @test _seriate_columns(zeros(1, 1), [0]) == [1]
+        @test _column_order((a=[1, missing],), Tables.columns((a=[1, missing],)),
+                            ["a"], 1, :cluster, ismissing) === nothing
+    end
+
+    # =========================================================================
+    # missingdrop / missingdropstats
+    # =========================================================================
+    @testset "missingdrop" begin
+        # row 1 & 4 complete; row 2 misses b; row 3 misses a and b
+        tbl = (a = [1, 2, missing, 4],
+               b = [1, missing, missing, 4],
+               c = [1, 2, 3, 4])
+
+        steps = missingdropstats(tbl)
+        @test [r.ndropped for r in steps] == [0, 1, 2]
+        @test [r.dropped  for r in steps] == [nothing, :b, :a]
+        @test [r.ncols    for r in steps] == [3, 2, 1]
+        @test [r.complete for r in steps] == [2, 3, 4]
+        @test [r.cells    for r in steps] == [6, 6, 4]
+        @test steps[1].pct == 50.0 && steps[end].pct == 100.0
+
+        # first row is the untouched table, and agrees with missingrowstats
+        rs = missingrowstats(tbl)
+        @test steps[1].complete == only(r.nrows for r in rs if r.nmissing == 0)
+
+        # b is dropped before a: it is the sole missing column of a whole row,
+        # so removing it completes more rows than removing a would
+        @test steps[2].dropped === :b
+
+        # the walk is monotone and stops at full completeness
+        @test issorted([r.complete for r in steps])
+        @test steps[end].complete == 4
+        @test all(r -> r.cells == r.complete * r.ncols, steps)
+
+        # a table with nothing missing needs no drops at all
+        @test length(missingdropstats((a=[1, 2], b=[3, 4]))) == 1
+        @test only(missingdropstats((a=[1, 2], b=[3, 4]))).pct == 100.0
+
+        # empty inputs
+        @test isempty(missingdropstats((a=Int[],)))
+        @test isempty(missingdropstats((;)))
+        @test occursin("Empty table", rendered(missingdrop, (a=Int[],)))
+
+        # the greedy search must not consume the pattern table it reads
+        ps = compute_pattern_stats(tbl)
+        snapshot = copy(ps.pattern_missing)
+        MissingPatterns._drop_path(ps)
+        @test ps.pattern_missing == snapshot
+        @test MissingPatterns._drop_path(ps)[1] == [2, 1]   # deterministic
+
+        # rendering
+        out = rendered(missingdrop, tbl; color=:never)
+        @test occursin("drop", out) && occursin("complete", out)
+        @test occursin("most complete-case cells", out)
+        @test occursin("—", out)                       # the "nothing dropped" row
+        @test occursin("2 of 4 rows complete as given", out)
+        @test all(l -> isvalid(l), split(out, '\n'))
+
+        # honours isna
+        sent = (a = [1, 9, 3], b = [1, 2, 3])
+        na(x) = ismissing(x) || x == 9
+        @test only(missingdropstats(sent)).complete == 3
+        @test missingdropstats(sent; isna=na)[1].complete == 2
+        @test missingdropstats(sent; isna=na)[2].dropped === :a
+
+        # argument validation
+        @test_throws ArgumentError missingdrop(IOBuffer(), tbl; color=:nope)
+        @test_throws ArgumentError missingdrop(IOBuffer(), tbl; bar_width=0)
+        @test_throws ArgumentError missingdropstats([1, 2, 3])
+
+        # default IO
+        @test occursin("drop", sprint(io -> missingdrop(io, tbl)))
+    end
+
     @testset "documented examples run" begin
         df = DataFrame(age    = [34, missing, 51, missing, 29],
                        income = [missing, 4200, 5100, missing, 3300],
@@ -1208,6 +1547,29 @@ end
         pairs = missingpairstats(tbl)
         @test length(first(sort(pairs; by = r -> -r.phi), 5)) == 1   # only 1 pair
         @test filter(r -> r.n11 > 0 && r.jaccard > 0.5, pairs) == eltype(pairs)[]
+
+        # missingdropstats docstring
+        dfd = DataFrame(a=[1, 2, missing, 4], b=[1, missing, missing, 4], c=[1, 2, 3, 4])
+        steps = missingdropstats(dfd)
+        best = steps[argmax([r.cells for r in steps])]
+        @test best.cells == 6
+        @test nrow(DataFrame(steps)) == 3
+
+        # data.md
+        @test [r.dropped for r in steps if r.dropped !== nothing] == [:b, :a]
+
+        # README / docs: sentinel-coded microdata
+        sent = (idade = [34, 9, 51, 9], sexo = ["M", "", "F", "M"])
+        na = x -> ismissing(x) || x == 9 || x == ""
+        @test all(r -> r.nmissing == 0, missingstats(sent))
+        @test [r.nmissing for r in missingstats(sent; isna=na)] == [2, 1]
+        @test occursin("50%", strip_ansi(rendered(plotmissing, sent; isna=na, color=:never)))
+
+        # README / docs: column ordering
+        ordered = (a=[missing, 1], b=[1, 2], c=[missing, 3])
+        for o in (:cluster, :missing, :name, :table)
+            @test occursin("┃", rendered(plotmissing, ordered; order=o, color=:never))
+        end
     end
 
 end
