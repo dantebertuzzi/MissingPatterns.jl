@@ -7,6 +7,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+- `notebooks/`, two Jupyter notebooks linked from the README by badges that open them in Google
+  Colab, which runs Julia natively. `getting-started.ipynb` is the tour: a table whose
+  missingness has deliberate structure — income refused on values of other columns, a lab result
+  and a weight that go missing together, `99` for "ignored" — and then every entry point finding
+  that structure, including `isna`, `by`/`period` grouping, the data API and an imputation
+  audited with `plotmissingdiff`. `obis-missingness.ipynb` runs the same diagnostics on marine
+  biodiversity records pulled live from OBIS with `OBISClient`, and checks the sample against
+  OBIS's own per-field counts for the whole query. Both are committed with the outputs of a real
+  run, so they read on GitHub without being executed.
+
 ## [0.6.0] - 2026-09-02
 
 ### Added

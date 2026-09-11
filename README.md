@@ -15,6 +15,7 @@ zero plotting-library dependencies, pure Unicode/ANSI terminal rendering.
 [![Coverage](https://coveralls.io/repos/github/dantebertuzzi/MissingPatterns.jl/badge.svg?branch=main)](https://coveralls.io/github/dantebertuzzi/MissingPatterns.jl?branch=main)
 [![JuliaHub](https://docs.juliahub.com/General/MissingPatterns/stable/version.svg)](https://juliahub.com/ui/Packages/General/MissingPatterns)
 [![DOI](https://zenodo.org/badge/DOI/10.5281/zenodo.22217099.svg)](https://doi.org/10.5281/zenodo.22217099)
+[![Open in Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/github/dantebertuzzi/MissingPatterns.jl/blob/main/notebooks/getting-started.ipynb)
 
 ## Installation
 
@@ -35,6 +36,18 @@ tbl = (A = [1, missing, 3, 4],
 
 plotmissing(tbl)
 ```
+
+## Notebooks
+
+Nothing to install to try it: Google Colab runs Julia natively, and both notebooks below open
+there from the badge. Pick the Julia runtime under *Runtime ▸ Change runtime type* and run the
+cells. Both are committed with the outputs of a real run, so they also read on GitHub without
+being executed.
+
+| Notebook | What it does |
+|---|---|
+| [`getting-started.ipynb`](notebooks/getting-started.ipynb) [![Open in Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/github/dantebertuzzi/MissingPatterns.jl/blob/main/notebooks/getting-started.ipynb) | The tour, on a table whose missingness was put there on purpose — and then found with the package rather than by knowing where it was. Every entry point, the `isna` sentinel form, grouping by category and by calendar period, the data API, and an imputation audited with `plotmissingdiff`. |
+| [`obis-missingness.ipynb`](notebooks/obis-missingness.ipynb) [![Open in Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/github/dantebertuzzi/MissingPatterns.jl/blob/main/notebooks/obis-missingness.ipynb) | The same diagnostics on real data: marine biodiversity records pulled live from [OBIS](https://obis.org) with [OBISClient.jl](https://github.com/dantebertuzzi/OBISClient.jl). Two depth fields that turn out to be one, a provenance split hiding in a negative ϕ, not a single complete record in three thousand — and a check of the sample against OBIS's own counts for the whole query. |
 
 ## Functions
 
