@@ -39,15 +39,16 @@ plotmissing(tbl)
 
 ## Notebooks
 
-Nothing to install to try it: Google Colab runs Julia natively, and both notebooks below open
+Nothing to install to try it: Google Colab runs Julia natively, and every notebook below opens
 there from the badge. Pick the Julia runtime under *Runtime ▸ Change runtime type* and run the
-cells. Both are committed with the outputs of a real run, so they also read on GitHub without
+cells. All are committed with the outputs of a real run, so they also read on GitHub without
 being executed.
 
 | Notebook | What it does |
 |---|---|
 | [`getting-started.ipynb`](notebooks/getting-started.ipynb) [![Open in Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/github/dantebertuzzi/MissingPatterns.jl/blob/main/notebooks/getting-started.ipynb) | The tour, on a table whose missingness was put there on purpose — and then found with the package rather than by knowing where it was. Every entry point, the `isna` sentinel form, grouping by category and by calendar period, the data API, and an imputation audited with `plotmissingdiff`. |
 | [`obis-missingness.ipynb`](notebooks/obis-missingness.ipynb) [![Open in Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/github/dantebertuzzi/MissingPatterns.jl/blob/main/notebooks/obis-missingness.ipynb) | The same diagnostics on real data: marine biodiversity records pulled live from [OBIS](https://obis.org) with [OBISClient.jl](https://github.com/dantebertuzzi/OBISClient.jl). Two depth fields that turn out to be one, a provenance split hiding in a negative ϕ, not a single complete record in three thousand — and a check of the sample against OBIS's own counts for the whole query. |
+| [`whats-new-0.7.ipynb`](notebooks/whats-new-0.7.ipynb) [![Open in Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/github/dantebertuzzi/MissingPatterns.jl/blob/main/notebooks/whats-new-0.7.ipynb) | What 0.7 adds, on the getting-started table: Little's MCAR test — including the mechanism it cannot see — pattern tables ordered by structure, grouped plots without the grouping column, row labels in HTML, and two releases of a table compared by key with `plotmissingdiff(...; on)`. |
 
 ## Functions
 
@@ -104,6 +105,7 @@ plotmissing(tbl; show_row_range=true)           # show original row ranges
 | `period` | `nothing` | `nothing` (categorical grouping by `by`'s exact value), or `:year`, `:quarter`, `:month`, `:week` (ISO-8601), `:day` for a `Date`/`DateTime` `by` column |
 | `isna` | `ismissing` | Predicate deciding what counts as an absent value |
 | `order` | `:table` | Column order: `:table`, `:missing`, `:name` or `:cluster` |
+| `exclude_by` | `true` | Leave the `by` column itself out of the grid |
 
 #### Layouts
 
@@ -136,7 +138,10 @@ row ranges. With `period=nothing` (default), groups are the column's exact
 values, sorted — works for any sortable column (`String`, `Symbol`, `Int`,
 ...). With `period` set to a calendar unit, groups are periods of a
 `Date`/`DateTime` column (e.g. `2004`, `2013-Q2`). Rows whose `by` value is
-`missing` form a trailing `∅` group either way.
+`missing` form a trailing `∅` group either way. The `by` column itself is
+left out of the grid — it would only restate the grouping, present in every
+group and missing in `∅` — and the summary's totals cover the columns drawn;
+pass `exclude_by=false` to keep it.
 
 #### Ordering the columns
 
@@ -229,6 +234,7 @@ missingpatterns(df)
 missingpatterns(tbl; max_patterns=10, min_pct=5.0)  # hide rare patterns
 missingpatterns(tbl; color_cells=true, emphasis=:missing)
 missingpatterns(tbl; show_bar=false)                # hide the UpSet-style frequency bar
+missingpatterns(tbl; order=:cluster)                # co-missing columns side by side
 ```
 
 `max_patterns` (default `20`) caps how many rows are displayed; `min_pct`
@@ -379,6 +385,7 @@ range and exact missing percentage.
 missinghtml(tbl)                                          # returns a String
 missinghtml(tbl; title="My Report", emphasis=:missing, missing_color="#ff0000")
 missinghtml(tbl; by=:region)                              # same grouping as plotmissing
+missinghtml(tbl; show_row_range=true)                     # row-range labels beside the grid
 missinghtml("/path/to/report.html", tbl)                  # writes to a file, returns the path
 ```
 

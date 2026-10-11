@@ -34,6 +34,7 @@ plotmissing(tbl; name_width=6)
 | `period` | `nothing` | `nothing` (categorical grouping by `by`'s exact value), or `:year`, `:quarter`, `:month`, `:week` (ISO-8601), `:day` for a `Date`/`DateTime` `by` column |
 | `isna` | `ismissing` | Predicate deciding what counts as an absent value |
 | `order` | `:table` | Column order: `:table`, `:missing`, `:name` or `:cluster` |
+| `exclude_by` | `true` | Leave the `by` column itself out of the grid |
 
 ### Grouping by category or by time
 
@@ -54,7 +55,10 @@ plotmissing(tbl2; by=:date, period=:week)
 plotmissing(tbl2; by=:date, period=:day)
 ```
 
-Rows whose `by` value is `missing` form a trailing `∅` group in either mode.
+Rows whose `by` value is `missing` form a trailing `∅` group in either mode. The `by` column itself is
+left out of the grid — it would only restate the grouping, present in every
+group and missing in `∅` — and the summary's totals cover the columns drawn;
+pass `exclude_by=false` to keep it.
 
 ### Ordering the columns
 

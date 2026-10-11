@@ -8,6 +8,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- `notebooks/whats-new-0.7.ipynb`, the release's new features on the getting-started table:
+  `missingmcar` rejecting MCAR for the income refusals and failing to see the date-driven skipped
+  visits (the test's limit, shown rather than stated), `missingpatterns(...; order=:cluster)`,
+  grouping without the `by` column, HTML row labels, and two releases compared with
+  `plotmissingdiff(...; on=:id)`. `getting-started.ipynb` and `obis-missingness.ipynb` were run
+  again against this release.
 - `notebooks/`, two Jupyter notebooks linked from the README by badges that open them in Google
   Colab, which runs Julia natively. `getting-started.ipynb` is the tour: a table whose
   missingness has deliberate structure — income refused on values of other columns, a lab result

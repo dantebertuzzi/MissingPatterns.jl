@@ -28,6 +28,18 @@ tbl = (A = [1, missing, 3, 4],
 plotmissing(tbl)
 ```
 
+## Notebooks
+
+Three notebooks run in Google Colab with nothing to install — pick the Julia
+runtime under *Runtime ▸ Change runtime type*. Each is committed with the
+outputs of a real run, so it also reads on GitHub.
+
+| Notebook | What it does |
+|---|---|
+| [`getting-started.ipynb`](https://colab.research.google.com/github/dantebertuzzi/MissingPatterns.jl/blob/main/notebooks/getting-started.ipynb) | The tour, on a table whose missingness was put there on purpose: every entry point, `isna`, grouping, the data API and an audited imputation. |
+| [`whats-new-0.7.ipynb`](https://colab.research.google.com/github/dantebertuzzi/MissingPatterns.jl/blob/main/notebooks/whats-new-0.7.ipynb) | What 0.7 adds: [`missingmcar`](@ref), pattern ordering, `exclude_by`, HTML row labels and keyed diffs. |
+| [`obis-missingness.ipynb`](https://colab.research.google.com/github/dantebertuzzi/MissingPatterns.jl/blob/main/notebooks/obis-missingness.ipynb) | The same diagnostics on live marine biodiversity records from OBIS. |
+
 ## Functions
 
 | Function | What it shows | Page |
@@ -38,6 +50,8 @@ plotmissing(tbl)
 | `missingsummary` | Per-column counts, % and a distribution sparkline | [Diagnostics](@ref) |
 | `missingcooccurrence` | Pairwise ϕ/Jaccard correlation of missingness masks | [Diagnostics](@ref) |
 | `missingrows` | *How many* values are missing per row | [Diagnostics](@ref) |
+| `missingdrop` | Which column to drop to buy back complete rows | [Diagnostics](@ref) |
+| `missingmcar` | Little's test of missing completely at random | [Diagnostics](@ref) |
 | `missinghtml` | The heatmap as a standalone HTML fragment | [Export and output](@ref) |
 | `missingreport` | The heatmap as an object that renders itself per medium | [Export and output](@ref) |
 

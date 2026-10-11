@@ -21,6 +21,15 @@ missingpatterns(tbl)
 missingpatterns(tbl; max_patterns=10, min_pct=5.0)
 missingpatterns(tbl; color_cells=true, emphasis=:missing)
 missingpatterns(tbl; show_bar=false)           # hide frequency bar
+missingpatterns(tbl; order=:cluster)           # co-missing columns side by side
+```
+
+`order` takes the same values as in [`plotmissing`](@ref) (`:table`,
+`:missing`, `:name`, `:cluster`). With `:cluster`, each pattern's missing cells
+read as one contiguous run instead of scattered marks; the order is computed
+from the pattern table itself, at no extra pass over the data.
+
+```julia
 ```
 
 ## `missingsummary` — Per-column missing summary

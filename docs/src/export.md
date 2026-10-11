@@ -8,8 +8,13 @@ Generates a standalone HTML heatmap suitable for reports and notebooks.
 missinghtml(tbl)
 missinghtml(tbl; title="My Report", emphasis=:missing, missing_color="#ff0000")
 missinghtml(tbl; by=:region)                   # same grouping as plotmissing
+missinghtml(tbl; show_row_range=true)          # row-range labels beside the grid
 missinghtml("/path/to/report.html", tbl)
 ```
+
+Row labels sit in a column left of the grid — row ranges, or the group values
+when `by` is set, where they are always on — and every cell also names its rows
+in a tooltip.
 
 ## `missingreport` — One object, two media
 
