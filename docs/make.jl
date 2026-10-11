@@ -22,6 +22,7 @@ makedocs(;
         "Export and output" => "export.md",
         "Public API" => "api.md",
         "Internals" => "internals.md",
+        "References" => "references.md",
     ],
 )
 

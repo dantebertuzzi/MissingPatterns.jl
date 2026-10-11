@@ -1457,6 +1457,15 @@ imputation strategy. For a correlation-style view of the same question, see
 
 # Returns
 - `nothing`. The table is written to `io`.
+
+# References
+- van Buuren, S., & Groothuis-Oudshoorn, K. (2011). mice: Multivariate
+  imputation by chained equations in R. *Journal of Statistical Software*,
+  45(3). doi:10.18637/jss.v045.i03 — `md.pattern()`.
+- Lex, A., Gehlenborg, N., Strobelt, H., Vuillemot, R., & Pfister, H. (2014).
+  UpSet: Visualization of intersecting sets. *IEEE Transactions on
+  Visualization and Computer Graphics*, 20(12), 1983–1992.
+  doi:10.1109/TVCG.2014.2346248 — the frequency bars.
 """
 function missingpatterns(io::IO, tbl; max_patterns::Int=20,
                           cell_chars::Int=5, char_missing::Char='█', char_present::Char='░',
@@ -1767,6 +1776,10 @@ the middle of the very block structure the ordering exists to expose.
 Among the remaining columns `NaN` counts as zero association. Ties break on the
 larger missing count, then on the lower column index, so the result never
 depends on iteration order.
+
+On seriation in general: Hahsler, M., Hornik, K., & Buchta, C. (2008). Getting
+things in order: An introduction to the R package seriation. *Journal of
+Statistical Software*, 25(3). doi:10.18637/jss.v025.i03
 """
 function _seriate_columns(M::Matrix{Float64}, n1::Vector{Int})
     nc = length(n1)
@@ -1986,6 +1999,13 @@ intensity scales with `|value|` using `missing_color`.
 
 - `isna`: predicate deciding what counts as an absent value
   (default: `ismissing`), as in [`plotmissing`](@ref).
+
+# References
+- Yule, G. U. (1912). On the methods of measuring association between two
+  attributes. *Journal of the Royal Statistical Society*, 75(6), 579–652.
+  doi:10.2307/2340126 — the ϕ coefficient.
+- Jaccard, P. (1912). The distribution of the flora in the alpine zone. *New
+  Phytologist*, 11(2), 37–50. doi:10.1111/j.1469-8137.1912.tb05611.x
 """
 function missingcooccurrence(io::IO, tbl; method::Symbol=:phi, cell_chars::Int=5,
                               name_width::Int=4, color::Symbol=:auto,
@@ -3365,8 +3385,15 @@ r.pvalue < 0.05 && @warn "missingness is not MCAR" r.statistic r.df
 missingmcar(df; columns = [:income, :age, :weight])
 ```
 
-Little, R. J. A. (1988). A test of missing completely at random for
-multivariate data with missing values. *JASA* 83(404), 1198–1202.
+# References
+- Little, R. J. A. (1988). A test of missing completely at random for
+  multivariate data with missing values. *Journal of the American Statistical
+  Association*, 83(404), 1198–1202. doi:10.1080/01621459.1988.10478722
+- Dempster, A. P., Laird, N. M., & Rubin, D. B. (1977). Maximum likelihood from
+  incomplete data via the EM algorithm. *Journal of the Royal Statistical
+  Society: Series B*, 39(1), 1–22. doi:10.1111/j.2517-6161.1977.tb01600.x
+- Rubin, D. B. (1976). Inference and missing data. *Biometrika*, 63(3),
+  581–592. doi:10.1093/biomet/63.3.581
 """
 function missingmcar(tbl; columns=nothing, isna::F=ismissing, maxiter::Int=1000,
                       tol::Float64=1e-8) where {F}
