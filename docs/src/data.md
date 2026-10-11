@@ -13,6 +13,8 @@ screen.
 | `missingpairstats` | unordered pair of columns | `a`, `b`, `phi`, `jaccard`, `n11`, `n1`, `n2`, `nrows` |
 | `missingrowstats` | observed missing-count | `nmissing`, `nrows`, `pct` |
 | `missingdropstats` | column-drop step | `ndropped`, `dropped`, `ncols`, `complete`, `pct`, `cells` |
+| `missingsentinels` | candidate sentinel value | `column`, `value`, `n`, `pct`, `reason` |
+| `missingpredictors` | other column | `column`, `kind`, `test`, `statistic`, `df`, `pvalue`, `effect`, `n_missing`, `n_present`, `detail` |
 
 ```julia
 using DataFrames

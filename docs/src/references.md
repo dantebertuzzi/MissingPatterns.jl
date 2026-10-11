@@ -1,5 +1,7 @@
 # References
 
+The formulas are on the [Methods](methods.md) page.
+
 The methods this package implements, and the work it follows. Each entry says
 where in the package it is used.
 
@@ -33,8 +35,32 @@ where in the package it is used.
   for a monotone pattern, which the test suite checks EM against.
 - Press, W. H., Teukolsky, S. A., Vetterling, W. T., & Flannery, B. P. (2007).
   *Numerical Recipes: The Art of Scientific Computing* (3rd ed.), §6.2.
-  Cambridge University Press. — the series and continued-fraction evaluation of
-  the incomplete gamma function behind the p-value.
+  Cambridge University Press. — §6.2, the series and continued-fraction
+  evaluation of the incomplete gamma function behind the χ² p-values; §6.4, the
+  incomplete beta function behind the t p-values of `missingpredictors`.
+- Lanczos, C. (1964). A precision approximation of the gamma function.
+  *Journal of the Society for Industrial and Applied Mathematics, Series B:
+  Numerical Analysis*, 1(1), 86–96. <https://doi.org/10.1137/0701008> — the
+  log-gamma used by the incomplete beta function.
+
+**Predictors of missingness** (`missingpredictors`)
+
+- Welch, B. L. (1947). The generalization of 'Student's' problem when several
+  different population variances are involved. *Biometrika*, 34(1–2), 28–35.
+  <https://doi.org/10.1093/biomet/34.1-2.28> — the unequal-variance t-test and
+  its degrees of freedom.
+- Pearson, K. (1900). On the criterion that a given system of deviations from
+  the probable in the case of a correlated system of variables is such that it
+  can be reasonably supposed to have arisen from random sampling. *The London,
+  Edinburgh, and Dublin Philosophical Magazine and Journal of Science*,
+  50(302), 157–175. <https://doi.org/10.1080/14786440009463897> — the χ² test
+  of independence.
+- Cramér, H. (1946). *Mathematical Methods of Statistics*. Princeton
+  University Press. <https://doi.org/10.1515/9781400883868> — Cramér's V.
+- Cohen, J. (1988). *Statistical Power Analysis for the Behavioral Sciences*
+  (2nd ed.). Lawrence Erlbaum; reprinted 2013, Routledge.
+  <https://doi.org/10.4324/9780203771587> — the standardized mean difference
+  and its conventional 0.2 / 0.5 / 0.8 benchmarks.
 
 **Patterns and co-occurrence** (`missingpatterns`, `missingcooccurrence`, `order=:cluster`)
 
@@ -59,6 +85,15 @@ where in the package it is used.
   introduction to the R package seriation. *Journal of Statistical Software*,
   25(3). <https://doi.org/10.18637/jss.v025.i03> — seriation, of which
   `order=:cluster` is a greedy nearest-neighbour instance.
+
+**Calendar grouping** (`period=:week`)
+
+- ISO 8601-1:2019. *Date and time — Representations for information
+  interchange — Part 1: Basic rules.* International Organization for
+  Standardization. — the week numbering and week-based year.
+
+**Sentinel detection** (`missingsentinels`) has no reference: its rules are
+this package's own heuristic, written out on the [Methods](methods.md) page.
 
 **Related software**
 

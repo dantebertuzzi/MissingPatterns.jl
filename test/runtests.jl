@@ -1758,6 +1758,120 @@ end
         @test missingmcar(sent; isna=(a = x -> ismissing(x) || x == 99,)).df == 1
     end
 
+    # =========================================================================
+    # missingsentinels / sentinelisna
+    # =========================================================================
+    @testset "missingsentinels" begin
+        n = 200
+        tbl = (raca     = [i % 10 == 0 ? 9 : 1 + i % 5 for i in 1:n],          # 9 beyond 1–5
+               idade    = [i % 25 == 0 ? 999 : i % 90 for i in 1:n],            # 999 beyond 0–89
+               escala   = [i % 10 for i in 1:n],                                # legit 0–9
+               velhos   = [i % 106 for i in 1:n],                               # legit, reaches 105
+               esc_txt  = [i % 10 == 0 ? "9" : string(1 + i % 5) for i in 1:n], # codes as text
+               nome     = [i % 20 == 0 ? "" : i % 20 == 1 ? " NA " : "x$i" for i in 1:n],
+               prop     = [i % 20 == 0 ? -1.0 : i / (n + 1) for i in 1:n],      # -1 below 0–1
+               spike    = [i % 4 == 0 ? 99 : 60 + i % 80 for i in 1:n],         # 99 in range, 30× neighbours
+               flag     = [isodd(i) for i in 1:n])
+        found = missingsentinels(tbl)
+        got = Set((r.column, r.value) for r in found)
+        @test got == Set([(:raca, 9), (:idade, 999), (:esc_txt, "9"), (:nome, ""),
+                          (:nome, " NA "), (:prop, -1.0), (:spike, 99)])
+        r = only(r for r in found if r.column == :raca)
+        @test r.n == 20 && r.pct ≈ 10.0
+        @test occursin("max 5", r.reason)
+        @test occursin("as frequent", only(r for r in found if r.column == :spike).reason)
+        @test occursin("min", only(r for r in found if r.column == :prop).reason)
+
+        # thresholds
+        @test isempty(missingsentinels((a = [1, 2, 3, 9],)))                 # min_count = 2
+        @test !isempty(missingsentinels((a = [1, 2, 3, 9],); min_count=1))
+        @test isempty(missingsentinels((a = [1, 2, 3, 9, 9],); codes=[99]))
+        @test !isempty(missingsentinels((s = ["a", "?", "?"],)))
+        @test isempty(missingsentinels((s = ["a", "?", "?"],); tokens=["na"]))
+        @test_throws ArgumentError missingsentinels(tbl; min_count=0)
+        @test_throws ArgumentError missingsentinels(tbl; spike=1.0)
+
+        # accepted candidates become per-column isna
+        isna = sentinelisna(found)
+        @test keys(isna) == (:raca, :idade, :esc_txt, :nome, :prop, :spike)
+        @test isna.raca(9) && !isna.raca(3) && isna.raca(missing)
+        @test isna.nome(" NA ") && !isna.nome("NA")      # exact values, as found
+        @test only(r.nmissing for r in missingstats(tbl; isna) if r.column == :raca) == 20
+        @test sentinelisna(eltype(found)[]) == NamedTuple()
+    end
+
+    # =========================================================================
+    # missingpredictors
+    # =========================================================================
+    @testset "t and beta functions" begin
+        @test MissingPatterns._t_twosided(2.2281388519649385, 10.0) ≈ 0.05 atol=1e-10
+        @test MissingPatterns._t_twosided(12.706204736174707, 1.0) ≈ 0.05 atol=1e-10
+        @test MissingPatterns._t_twosided(1.0, 1.0) ≈ 0.5            # Cauchy
+        @test MissingPatterns._t_twosided(0.0, 5.0) == 1.0
+        @test MissingPatterns._betai(2.0, 3.0, 0.4) ≈ 0.5248      # 1 - Σ binomial terms
+        for m in 1:12
+            @test MissingPatterns._lgamma(m / 2) ≈ MissingPatterns._lgamma_half(m) atol=1e-12
+        end
+        @test MissingPatterns._lgamma(0.3) ≈ log(2.991568987687590) atol=1e-12
+    end
+
+    @testset "missingpredictors" begin
+        n = 400
+        x  = [sin(7i) for i in 1:n]                                   # deterministic spread
+        g  = [("a", "b", "c")[1 + i % 3] for i in 1:n]
+        d  = [Date(2019, 1, 1) + Day(5i) for i in 1:n]
+        u  = [cos(11i) for i in 1:n]
+        y  = Union{Missing,Float64}[(x[i] > 0.5 || g[i] == "c") ? missing : 1.0 for i in 1:n]
+        tbl = (y = y, x = x, g = g, d = d, u = u)
+        rs = missingpredictors(tbl, :y)
+        @test [r.column for r in rs][1:2] |> Set == Set([:x, :g])
+        rx = only(r for r in rs if r.column == :x)
+        @test rx.kind == :numeric && rx.test == :welch_t && rx.pvalue < 1e-10 && rx.effect > 0.8
+        @test rx.n_missing + rx.n_present == n
+        rg = only(r for r in rs if r.column == :g)
+        @test rg.kind == :categorical && rg.df == 2 && rg.pvalue < 1e-10
+        @test startswith(rg.detail, "c:")
+        ru = only(r for r in rs if r.column == :u)
+        @test ru.pvalue > 0.01
+        rd = only(r for r in rs if r.column == :d)
+        @test rd.kind == :numeric && occursin(r"\d{4}-\d{2}-\d{2}", rd.detail)
+        @test issorted([r.pvalue for r in rs])
+
+        # Welch t matches a hand computation
+        a = [1.0, 2.0, 4.0, 7.0]; b = [2.0, 3.0, 3.5, 5.0, 6.0, 8.0]
+        yy = Union{Missing,Int}[fill(missing, 4); fill(1, 6)]
+        r = only(missingpredictors((y = yy, v = [a; b]), :y))
+        m1, m2 = sum(a) / 4, sum(b) / 6
+        v1, v2 = sum((a .- m1) .^ 2) / 3, sum((b .- m2) .^ 2) / 5
+        @test r.statistic ≈ (m1 - m2) / sqrt(v1 / 4 + v2 / 6)
+        @test r.df ≈ (v1 / 4 + v2 / 6)^2 / ((v1 / 4)^2 / 3 + (v2 / 6)^2 / 5)
+        @test r.effect ≈ (m1 - m2) / sqrt((v1 + v2) / 2)
+
+        # χ² matches a hand computation on a 2×2 table
+        cat = ["p", "p", "p", "q", "p", "q", "q", "q", "q", "q"]
+        yc = Union{Missing,Int}[missing, missing, missing, missing, 1, 1, 1, 1, 1, 1]
+        r = only(missingpredictors((y = yc, c = cat), :y))
+        O = [3 1; 1 5]; E = sum(O; dims=2) * sum(O; dims=1) / 10
+        @test r.statistic ≈ sum((O .- E) .^ 2 ./ E)
+        @test r.effect ≈ sqrt(r.statistic / 10)
+
+        # absence in the predictor is a level of its own
+        cm = Union{Missing,String}[missing, missing, missing, "a", "a", "a", "a", "a", "a", "a"]
+        @test startswith(only(missingpredictors((y = yc, c = cm), :y)).detail, "∅")
+
+        # long tails pool into (other)
+        many = (y = Union{Missing,Int}[isodd(i) ? missing : 1 for i in 1:100], k = string.(1:100))
+        @test only(missingpredictors(many, :y; max_levels=5)).df == 4
+
+        @test_throws ArgumentError missingpredictors(tbl, :nope)
+        @test_throws ArgumentError missingpredictors(tbl, :x)        # never missing
+        @test_throws ArgumentError missingpredictors(tbl, :y; max_levels=1)
+        # isna defines the target's missingness too
+        coded = (y = [isodd(i) ? 9 : 1 for i in 1:20], v = Float64.(1:20))
+        @test_throws ArgumentError missingpredictors(coded, :y)
+        @test only(missingpredictors(coded, :y; isna=(y = x -> ismissing(x) || x == 9,))).n_missing == 10
+    end
+
     @testset "documented examples run" begin
         df = DataFrame(age    = [34, missing, 51, missing, 29],
                        income = [missing, 4200, 5100, missing, 3300],

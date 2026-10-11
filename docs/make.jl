@@ -19,6 +19,7 @@ makedocs(;
         "Heatmaps" => "heatmap.md",
         "Diagnostics" => "diagnostics.md",
         "Data API" => "data.md",
+        "Methods" => "methods.md",
         "Export and output" => "export.md",
         "Public API" => "api.md",
         "Internals" => "internals.md",

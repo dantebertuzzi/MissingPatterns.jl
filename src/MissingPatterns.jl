@@ -18,6 +18,8 @@ Exported API:
   imputation step).
 - [`missinghtml`](@ref) — the heatmap as a standalone HTML fragment.
 - [`missingmcar`](@ref) — Little's test of missing completely at random.
+- [`missingsentinels`](@ref) — values that probably encode absence, for `isna`.
+- [`missingpredictors`](@ref) — what a column's missingness depends on.
 """
 module MissingPatterns
 
@@ -29,7 +31,8 @@ using LinearAlgebra: Diagonal, Symmetric, cholesky, issuccess, inv, diag, dot
 export plotmissing, missingpatterns, missingcooccurrence, missingsummary,
        plotmissingdiff, missinghtml, missingrows, missingdrop,
        missingstats, missingpatternstats, missingpairstats, missingrowstats,
-       missingdropstats, missingreport, missingmcar
+       missingdropstats, missingreport, missingmcar, missingsentinels, sentinelisna,
+       missingpredictors
 
 # =============================================================================
 # Validation & small pure helpers
@@ -3453,6 +3456,513 @@ function missingmcar(tbl; columns=nothing, isna::F=ismissing, maxiter::Int=1000,
 end
 
 # =============================================================================
+# STAGE 1h — Sentinel detection
+#
+# `isna` lets coded absences (`9`, `99`, `""`, "ignorado") count as missing, but
+# leaves finding them to the user — and in administrative microdata that is the
+# slow part. `missingsentinels` proposes candidates, each with the evidence for
+# it, for a person to accept or reject; `sentinelisna` turns the accepted ones
+# into the per-column `isna` every other function takes.
+#
+# A numeric code is only proposed when the data back it: either it sits beyond
+# every other value of its column, past a gap, or it is several times more
+# frequent than the values around it. `9` in a 0–9 scale or `99` in an age
+# column that reaches 105 is therefore left alone.
+# =============================================================================
+
+const _SENTINEL_TOKENS = Set([
+    "", "na", "n/a", "n.a.", "nan", "null", "none", "nil", "-", "--", "---", ".", "?",
+    "missing", "unknown", "not available", "not known", "not stated",
+    "ignorado", "ignorada", "ign", "sem informação", "sem informacao", "não informado",
+    "nao informado", "não sabe", "nao sabe", "desconhecido", "s/i",
+])
+
+# Repeated nines up to nine digits, and the usual negative codes.
+const _SENTINEL_CODES = vcat([parse(Int, "9"^k) for k in 1:9],
+                             [-1, -9, -99, -999, -9999, -99999])
+
+_sentinel_norm(s::AbstractString) = lowercase(strip(s))
+
+"""
+    _NumScan
+
+Running state of the numeric pass over one column: per-code counts (and the
+raw values that produced them, so a predicate can match the column's own
+values), counts at the integer neighbours of each code, and the range of the
+values that are not candidate codes.
+"""
+mutable struct _NumScan{R}
+    codes::Set{Float64}
+    neighbours::Set{Float64}
+    raw::Dict{Float64,Dict{R,Int}}
+    near::Dict{Float64,Int}
+    lo::Float64
+    hi::Float64
+    integral::Bool
+    nother::Int
+end
+
+_NumScan{R}(codes::Vector{Float64}) where {R} =
+    _NumScan{R}(Set(codes),
+                Set(c + k for c in codes for k in -5:5 if k != 0 && !(c + k in codes)),
+                Dict{Float64,Dict{R,Int}}(), Dict{Float64,Int}(), Inf, -Inf, true, 0)
+
+@inline function _scan!(st::_NumScan{R}, raw::R, x::Float64) where {R}
+    if x in st.codes
+        d = get!(() -> Dict{R,Int}(), st.raw, x)
+        d[raw] = get(d, raw, 0) + 1
+        return nothing
+    end
+    st.nother += 1
+    st.lo = min(st.lo, x)
+    st.hi = max(st.hi, x)
+    st.integral &= isinteger(x)
+    x in st.neighbours && (st.near[x] = get(st.near, x, 0) + 1)
+    return nothing
+end
+
+_fmtnum(x::Float64) = isinteger(x) && abs(x) < 1e15 ? string(Int(x)) : @sprintf("%.4g", x)
+
+# Turn a finished scan into (raw value, count, reason) candidates.
+function _numeric_candidates(st::_NumScan{R}, min_count::Int, spike::Float64) where {R}
+    out = Tuple{R,Int,String}[]
+    gap = st.integral ? 2.0 : 1.0
+    for (c, raws) in st.raw
+        n = sum(values(raws))
+        n >= min_count || continue
+        reason = if st.nother == 0
+            "the column holds nothing but codes"
+        elseif c > 0 && c > st.hi && c - st.hi >= gap
+            string("above every other value (max ", _fmtnum(st.hi), ")")
+        elseif c < 0 && c < st.lo && st.lo - c >= gap
+            string("below every other value (min ", _fmtnum(st.lo), ")")
+        else
+            # Mean count over the ten integer neighbours; codes among them are
+            # not counted, and a floor of 1 keeps a sparse column from turning
+            # any repeated value into a spike.
+            ks = [c + k for k in -5:5 if k != 0 && !(c + k in st.codes)]
+            m = isempty(ks) ? 0.0 : sum(k -> get(st.near, k, 0), ks) / length(ks)
+            ratio = n / max(m, 1.0)
+            ratio >= spike || continue
+            string(round(Int, ratio), "× as frequent as the values around it")
+        end
+        for (r, k) in raws
+            push!(out, (r, k, reason))
+        end
+    end
+    return out
+end
+
+function _sentinels_in(col::AbstractVector{T}, codes::Vector{Float64}, tokens::Set{String},
+                       min_count::Int, spike::Float64, numeric_share::Float64) where {T}
+    S = Base.nonmissingtype(T)
+    if S <: Real && !(S <: Bool)
+        st = _NumScan{S}(codes)
+        for x in col
+            ismissing(x) || _scan!(st, x, Float64(x))
+        end
+        return Tuple{Any,Int,String}[(r, n, why) for (r, n, why) in
+                                     _numeric_candidates(st, min_count, spike)]
+    elseif S <: AbstractString
+        out = Tuple{Any,Int,String}[]
+        tok = Dict{S,Int}()
+        st = _NumScan{S}(codes)
+        nonmiss = 0
+        nnum = 0
+        for x in col
+            ismissing(x) && continue
+            nonmiss += 1
+            _sentinel_norm(x) in tokens && (tok[x] = get(tok, x, 0) + 1; continue)
+            v = tryparse(Float64, strip(x))
+            v === nothing && continue
+            nnum += 1
+            _scan!(st, x, v)
+        end
+        for (r, n) in tok
+            n >= min_count && push!(out, (r, n, isempty(strip(r)) ? "blank text" :
+                                                "text that reads as absent"))
+        end
+        # Codes stored as text ("9" in a column of "1"…"5") are only judged
+        # numerically when the column really is numbers written as text.
+        if nonmiss > 0 && nnum >= numeric_share * (nonmiss - sum(values(tok); init=0))
+            for c in _numeric_candidates(st, min_count, spike)
+                push!(out, c)
+            end
+        end
+        return out
+    end
+    return Tuple{Any,Int,String}[]
+end
+
+"""
+    missingsentinels(tbl; codes, tokens, min_count=2, spike=5.0) -> Vector{<:NamedTuple}
+
+Propose values that probably *encode* absence — a `9` for "ignored", a `99999`
+for "not stated", an empty string, `"NA"`, `"ignorado"` — so they can be counted
+as missing with `isna`. Public microdata rarely uses `missing`, and finding the
+codes by hand is the slow part of reading it.
+
+These are **candidates for review, not verdicts.** Every row says why the value
+was proposed; accept the ones that are codes, then pass them on with
+[`sentinelisna`](@ref).
+
+What is proposed:
+
+- **Text** whose trimmed, lowercased form is blank or reads as absent
+  (`""`, `"NA"`, `"null"`, `"-"`, `"unknown"`, `"ignorado"`, `"sem informação"`…).
+- **Numeric codes** (`9`, `99`, … up to nine nines, and `-1`, `-9`, `-99`, …)
+  when the data back them: the code lies beyond every other value of the
+  column — above for positive codes, below for negative ones — past a gap of
+  at least 2 (integer columns) or 1 (others); or it occurs at least `spike`
+  times as often as its integer neighbours. So `9` in a 0–9 scale, or `99` in
+  an age column that reaches 105, is not proposed.
+- **Numbers written as text** — a column of `"1"`…`"5"` and `"9"`, as CSVs of
+  administrative data often are — are judged numerically when at least 90% of
+  the column's other values parse as numbers.
+
+# Arguments
+- `codes`: the numeric codes to consider (default: the list above).
+- `tokens`: the absent-looking texts, compared after `strip` and `lowercase`
+  (default: the list above, in English and Portuguese).
+- `min_count::Int`: ignore a value seen fewer times than this (default: `2`).
+- `spike::Float64`: frequency ratio over the neighbours that makes an in-range
+  code suspicious (default: `5.0`).
+
+# Returns
+A row table, one row per candidate value, in column order, with fields
+`column::Symbol`, `value` (exactly as it appears in the column), `n::Int`,
+`pct::Float64` (of all rows) and `reason::String`.
+
+# Examples
+```julia
+found = missingsentinels(df)
+DataFrame(found)                                   # review
+
+isna = sentinelisna(found)                         # accept all of them
+isna = sentinelisna(filter(r -> r.column != :age, found))
+missingsummary(df; isna)
+```
+
+The detection rules are this package's own heuristic, written out on the
+*Methods* page of the documentation; they encode the conventions of
+administrative microdata (nines for "ignored", negative codes for "not
+applicable") rather than a published test.
+"""
+function missingsentinels(tbl; codes=_SENTINEL_CODES, tokens=_SENTINEL_TOKENS,
+                           min_count::Int=2, spike::Float64=5.0)
+    min_count >= 1 || throw(ArgumentError("min_count must be at least 1, got $min_count"))
+    spike > 1 || throw(ArgumentError("spike must be greater than 1, got $spike"))
+    cols, colnames, nrows, ncols = _table_info(tbl)
+    fcodes = Float64[Float64(c) for c in codes]
+    toks = Set{String}(_sentinel_norm(String(t)) for t in tokens)
+
+    R = NamedTuple{(:column, :value, :n, :pct, :reason),Tuple{Symbol,Any,Int,Float64,String}}
+    rows = R[]
+    for j in 1:ncols
+        found = _sentinels_in(Tables.getcolumn(cols, j), fcodes, toks, min_count, spike, 0.9)
+        sort!(found; by = f -> (-f[2], string(f[1])))
+        for (v, n, why) in found
+            push!(rows, (column = Symbol(colnames[j]), value = v, n = n,
+                         pct = 100 * n / nrows, reason = why))
+        end
+    end
+    return rows
+end
+
+"""
+    sentinelisna(found) -> NamedTuple
+
+Build the per-column `isna` predicates from rows of [`missingsentinels`](@ref)
+(after filtering out the ones you rejected): each column named in `found` gets
+`x -> ismissing(x) || x in values`, so its accepted codes count as absent.
+Columns not named keep the `ismissing` default wherever the result is used.
+
+```julia
+isna = sentinelisna(missingsentinels(df))
+plotmissing(df; isna)
+missingmcar(df; isna)
+```
+"""
+function sentinelisna(found)
+    bycol = Dict{Symbol,Vector{Any}}()
+    order = Symbol[]
+    for r in found
+        haskey(bycol, r.column) || (bycol[r.column] = Any[]; push!(order, r.column))
+        push!(bycol[r.column], r.value)
+    end
+    preds = map(order) do c
+        vals = Set(identity.(bycol[c]))   # narrowed eltype: a concrete Set
+        x -> ismissing(x) || x in vals
+    end
+    return NamedTuple{Tuple(order)}(Tuple(preds))
+end
+
+# =============================================================================
+# STAGE 1i — What predicts a column's missingness
+#
+# `missingmcar` says *whether* missingness is related to the data; this says
+# *to what*. For one target column, every other column is compared between the
+# rows where the target is missing and the rows where it is present. A column
+# that differs is a predictor of the missingness — the working definition of
+# MAR on it, and the variables an imputation model for the target must include.
+# =============================================================================
+
+# Lanczos approximation (g = 7, n = 9) of log Γ, accurate to ~1e-15 for x > 0.
+const _LANCZOS = (0.99999999999980993, 676.5203681218851, -1259.1392167224028,
+                  771.32342877765313, -176.61502916214059, 12.507343278686905,
+                  -0.13857109526572012, 9.9843695780195716e-6, 1.5056327351493116e-7)
+
+function _lgamma(x::Float64)
+    x < 0.5 && return log(π / abs(sin(π * x))) - _lgamma(1 - x)
+    x -= 1
+    a = _LANCZOS[1]
+    t = x + 7.5
+    for i in 1:8
+        a += _LANCZOS[i + 1] / (x + i)
+    end
+    return 0.5 * log(2π) + (x + 0.5) * log(t) - t + log(a)
+end
+
+# Continued fraction for the incomplete beta (Numerical Recipes §6.4, Lentz).
+function _betacf(a::Float64, b::Float64, x::Float64)
+    tiny = floatmin(Float64)
+    qab, qap, qam = a + b, a + 1, a - 1
+    c = 1.0
+    d = 1 - qab * x / qap
+    abs(d) < tiny && (d = tiny)
+    d = 1 / d
+    h = d
+    for m in 1:100_000
+        m2 = 2m
+        aa = m * (b - m) * x / ((qam + m2) * (a + m2))
+        d = 1 + aa * d; abs(d) < tiny && (d = tiny)
+        c = 1 + aa / c; abs(c) < tiny && (c = tiny)
+        d = 1 / d
+        h *= d * c
+        aa = -(a + m) * (qab + m) * x / ((a + m2) * (qap + m2))
+        d = 1 + aa * d; abs(d) < tiny && (d = tiny)
+        c = 1 + aa / c; abs(c) < tiny && (c = tiny)
+        d = 1 / d
+        δ = d * c
+        h *= δ
+        abs(δ - 1) < eps() && break
+    end
+    return h
+end
+
+"""
+    _betai(a, b, x) -> Float64
+
+Regularized incomplete beta `I_x(a, b)`, by the continued fraction on whichever
+side of `(a + 1) / (a + b + 2)` it converges fast.
+"""
+function _betai(a::Float64, b::Float64, x::Float64)
+    x <= 0 && return 0.0
+    x >= 1 && return 1.0
+    bt = exp(_lgamma(a + b) - _lgamma(a) - _lgamma(b) + a * log(x) + b * log1p(-x))
+    return x < (a + 1) / (a + b + 2) ? bt * _betacf(a, b, x) / a :
+                                        1 - bt * _betacf(b, a, 1 - x) / b
+end
+
+# Two-sided p-value of Student's t with ν degrees of freedom.
+_t_twosided(t::Float64, ν::Float64) = _betai(ν / 2, 0.5, ν / (ν + t^2))
+
+# Numeric value of a predictor cell: dates count in their own units (days for a
+# `Date`), so a difference in means reads as a difference in time.
+@inline _pred_value(x::Real) = Float64(x)
+@inline _pred_value(x::Dates.TimeType) = Float64(Dates.value(x))
+
+_pred_show(m::Float64, ::Type{<:Real}) = _fmtnum(round(m; sigdigits=4))
+_pred_show(m::Float64, ::Type{Dates.Date}) = string(Dates.Date(Dates.UTD(round(Int, m))))
+_pred_show(m::Float64, ::Type{Dates.DateTime}) =
+    string(Dates.DateTime(Dates.UTM(round(Int, m))))
+_pred_show(m::Float64, ::Type) = _fmtnum(round(m; sigdigits=4))
+
+# Welford accumulators for the two groups (target missing / present).
+function _numeric_predictor(col::AbstractVector{T}, miss::BitVector, isna::F) where {T,F}
+    n = [0, 0]; μ = [0.0, 0.0]; M2 = [0.0, 0.0]
+    @inbounds for (r, i) in enumerate(eachindex(col))
+        x = col[i]
+        (ismissing(x) || isna(x)) && continue
+        g = miss[r] ? 1 : 2
+        v = _pred_value(x)
+        n[g] += 1
+        δ = v - μ[g]
+        μ[g] += δ / n[g]
+        M2[g] += δ * (v - μ[g])
+    end
+    S = Base.nonmissingtype(T)
+    if n[1] < 2 || n[2] < 2
+        return (statistic = NaN, df = NaN, pvalue = NaN, effect = NaN, n1 = n[1], n2 = n[2],
+                detail = "too few observed values to compare")
+    end
+    v1, v2 = M2[1] / (n[1] - 1), M2[2] / (n[2] - 1)
+    se2 = v1 / n[1] + v2 / n[2]
+    pooled = sqrt((v1 + v2) / 2)
+    smd = pooled == 0 ? (μ[1] == μ[2] ? 0.0 : NaN) : (μ[1] - μ[2]) / pooled
+    detail = string("mean ", _pred_show(μ[1], S), " where missing vs ",
+                    _pred_show(μ[2], S), " where present")
+    if se2 == 0
+        return (statistic = NaN, df = NaN, pvalue = μ[1] == μ[2] ? 1.0 : 0.0, effect = smd,
+                n1 = n[1], n2 = n[2], detail = detail)
+    end
+    t = (μ[1] - μ[2]) / sqrt(se2)
+    ν = se2^2 / ((v1 / n[1])^2 / (n[1] - 1) + (v2 / n[2])^2 / (n[2] - 1))
+    return (statistic = t, df = ν, pvalue = _t_twosided(t, ν), effect = smd,
+            n1 = n[1], n2 = n[2], detail = detail)
+end
+
+function _categorical_predictor(col::AbstractVector{T}, miss::BitVector, isna::F,
+                                max_levels::Int) where {T,F}
+    S = Base.nonmissingtype(T)
+    cnt = Dict{Union{S,Nothing},Vector{Int}}()     # level => [n where missing, n where present]
+    @inbounds for (r, i) in enumerate(eachindex(col))
+        x = col[i]
+        key = (ismissing(x) || isna(x)) ? nothing : x
+        c = get!(() -> [0, 0], cnt, key)
+        c[miss[r] ? 1 : 2] += 1
+    end
+    lv = collect(cnt)
+    sort!(lv; by = p -> (-(p[2][1] + p[2][2]), p[1] === nothing ? "" : string(p[1])))
+    # Keep the most common levels; the long tail is pooled so a high-cardinality
+    # column cannot spread the test over hundreds of near-empty cells.
+    if length(lv) > max_levels
+        rest = lv[max_levels:end]
+        other = [sum(p -> p[2][1], rest), sum(p -> p[2][2], rest)]
+        lv = vcat([(string(p[1] === nothing ? _MISSING_GROUP_LABEL : p[1]), p[2])
+                   for p in lv[1:max_levels - 1]], [("(other)", other)])
+    else
+        lv = [(p[1] === nothing ? _MISSING_GROUP_LABEL : string(p[1]), p[2]) for p in lv]
+    end
+    N1 = sum(p -> p[2][1], lv)
+    N2 = sum(p -> p[2][2], lv)
+    N = N1 + N2
+    k = length(lv)
+    if k < 2 || N1 == 0 || N2 == 0
+        return (statistic = NaN, df = NaN, pvalue = NaN, effect = NaN, n1 = N1, n2 = N2,
+                detail = "a single level: nothing to compare")
+    end
+    χ2 = 0.0
+    for (_, c) in lv
+        tot = c[1] + c[2]
+        for (o, Ng) in ((c[1], N1), (c[2], N2))
+            e = tot * Ng / N
+            χ2 += (o - e)^2 / e
+        end
+    end
+    lead = lv[argmax([c[1] / N1 - c[2] / N2 for (_, c) in lv])]
+    detail = @sprintf("%s: %.1f%% of rows where missing vs %.1f%% where present",
+                      lead[1], 100 * lead[2][1] / N1, 100 * lead[2][2] / N2)
+    return (statistic = χ2, df = Float64(k - 1), pvalue = _chisq_sf(χ2, k - 1),
+            effect = sqrt(χ2 / N), n1 = N1, n2 = N2, detail = detail)
+end
+
+"""
+    missingpredictors(tbl, column; isna=ismissing, max_levels=20) -> Vector{<:NamedTuple}
+
+What the missingness of `column` depends on. Every other column is compared
+between the rows where `column` is missing and the rows where it is present;
+one that differs predicts the missingness. That is the working diagnostic for
+*missing at random* on that column, and it names the variables an imputation
+model for `column` has to include.
+
+- **Numeric and date columns** — Welch's two-sample t-test on the means; the
+  effect is the standardized mean difference (difference over the root mean
+  of the two variances), so `0.2` is small and `0.8` large by the usual
+  convention. Rows where the predictor itself is absent are left out. Dates are
+  compared in their own units and shown as dates.
+- **Everything else** (text, `Symbol`, `Bool`, categorical codes) — a χ² test
+  of independence between the level and the missingness of `column`; the
+  effect is Cramér's V. Absence in the predictor is a level of its own (`∅`),
+  and beyond `max_levels` the least common levels are pooled into `(other)`.
+
+`detail` says which way the difference goes — the two means, or the level most
+over-represented where `column` is missing.
+
+# Returns
+A row table, one row per other column, most significant first, with fields
+`column::Symbol`, `kind::Symbol` (`:numeric` or `:categorical`),
+`test::Symbol` (`:welch_t` or `:chisq`), `statistic`, `df`, `pvalue`,
+`effect` (all `Float64`), `n_missing`, `n_present` (rows used from each
+group) and `detail::String`.
+
+!!! note
+    One test is run per column, so with many columns some will come out
+    "significant" by chance — at the 5% level, about one in twenty of the
+    unrelated ones. Read the effect sizes, not only the p-values, and with
+    large tables expect tiny effects to be significant.
+
+# Examples
+```julia
+DataFrame(missingpredictors(df, :income))
+first(missingpredictors(df, :income; isna = sentinelisna(missingsentinels(df))), 3)
+```
+
+See also [`missingmcar`](@ref), which tests all columns jointly. The formulas
+are on the *Methods* page of the documentation.
+
+# References
+- Welch, B. L. (1947). The generalization of 'Student's' problem when several
+  different population variances are involved. *Biometrika*, 34(1–2), 28–35.
+  doi:10.1093/biomet/34.1-2.28
+- Pearson, K. (1900). On the criterion that a given system of deviations from
+  the probable in the case of a correlated system of variables is such that it
+  can be reasonably supposed to have arisen from random sampling.
+  *Philosophical Magazine*, 50(302), 157–175. doi:10.1080/14786440009463897
+- Cramér, H. (1946). *Mathematical Methods of Statistics*. Princeton
+  University Press. doi:10.1515/9781400883868 — Cramér's V.
+- Cohen, J. (1988). *Statistical Power Analysis for the Behavioral Sciences*
+  (2nd ed.). Lawrence Erlbaum (reprinted 2013, Routledge,
+  doi:10.4324/9780203771587) — the standardized mean difference and its
+  conventional 0.2 / 0.5 / 0.8.
+"""
+function missingpredictors(tbl, column; isna::F=ismissing, max_levels::Int=20) where {F}
+    max_levels >= 2 || throw(ArgumentError("max_levels must be at least 2, got $max_levels"))
+    cols, colnames, nrows, ncols = _table_info(tbl)
+    _check_isna(isna, colnames)
+    name = String(column)
+    t = findfirst(==(name), colnames)
+    t === nothing && throw(ArgumentError(
+        "column \"$name\" not found; available: $(join(colnames, ", "))"))
+
+    miss = BitVector(undef, nrows)
+    _missing_mask!(miss, Tables.getcolumn(cols, t), _isna_for(isna, Symbol(name)))
+    nm = count(miss)
+    (0 < nm < nrows) || throw(ArgumentError(
+        "column \"$name\" is " * (nm == 0 ? "never" : "always") *
+        " missing, so there is nothing to compare"))
+
+    R = NamedTuple{(:column, :kind, :test, :statistic, :df, :pvalue, :effect,
+                    :n_missing, :n_present, :detail),
+                   Tuple{Symbol,Symbol,Symbol,Float64,Float64,Float64,Float64,Int,Int,String}}
+    rows = R[]
+    for j in 1:ncols
+        j == t && continue
+        col = Tables.getcolumn(cols, j)
+        S = Base.nonmissingtype(eltype(col))
+        pna = _isna_for(isna, Symbol(colnames[j]))
+        numeric = (S <: Real && !(S <: Bool)) || S <: Dates.TimeType
+        r = numeric ? _numeric_predictor(col, miss, pna) :
+                      _categorical_predictor(col, miss, pna, max_levels)
+        push!(rows, (column = Symbol(colnames[j]), kind = numeric ? :numeric : :categorical,
+                     test = numeric ? :welch_t : :chisq, statistic = r.statistic,
+                     df = r.df, pvalue = r.pvalue, effect = r.effect,
+                     n_missing = r.n1, n_present = r.n2, detail = r.detail))
+    end
+    # Most significant first; undefined tests last; ties by effect size.
+    sort!(rows; by = r -> (isnan(r.pvalue), r.pvalue, -abs(r.effect)))
+    return rows
+end
+
+function _missing_mask!(miss::BitVector, col::AbstractVector, isna::F) where {F}
+    @inbounds for (r, i) in enumerate(eachindex(col))
+        x = col[i]
+        miss[r] = ismissing(x) || isna(x)
+    end
+    return miss
+end
+
+# =============================================================================
 # STAGE 2i — Medium-aware report object
 #
 # `show(io, ::MIME"text/html", x)` cannot be attached to the caller's own
@@ -3582,6 +4092,9 @@ if _HAS_PRECOMPILETOOLS
         missingpairstats(_tbl)
         missingrowstats(_tbl)
         missingmcar((a = [1.0, missing, 3.0, 4.0, 2.0], b = [2.0, 1.0, missing, 5.0, 3.0]))
+        _found = missingsentinels((a = [1, 2, 9, 9, 3], s = ["x", "", "NA", "", "y"]))
+        sentinelisna(_found)
+        missingpredictors(_tbl, :b)
         show(_io, MIME"text/plain"(), missingreport(_tbl))
         show(_io, MIME"text/html"(), missingreport(_tbl))
     end

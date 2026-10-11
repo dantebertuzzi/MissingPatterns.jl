@@ -48,7 +48,7 @@ being executed.
 |---|---|
 | [`getting-started.ipynb`](notebooks/getting-started.ipynb) [![Open in Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/github/dantebertuzzi/MissingPatterns.jl/blob/main/notebooks/getting-started.ipynb) | The tour, on a table whose missingness was put there on purpose — and then found with the package rather than by knowing where it was. Every entry point, the `isna` sentinel form, grouping by category and by calendar period, the data API, and an imputation audited with `plotmissingdiff`. |
 | [`obis-missingness.ipynb`](notebooks/obis-missingness.ipynb) [![Open in Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/github/dantebertuzzi/MissingPatterns.jl/blob/main/notebooks/obis-missingness.ipynb) | The same diagnostics on real data: marine biodiversity records pulled live from [OBIS](https://obis.org) with [OBISClient.jl](https://github.com/dantebertuzzi/OBISClient.jl). Two depth fields that turn out to be one, a provenance split hiding in a negative ϕ, not a single complete record in three thousand — and a check of the sample against OBIS's own counts for the whole query. |
-| [`whats-new-0.7.ipynb`](notebooks/whats-new-0.7.ipynb) [![Open in Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/github/dantebertuzzi/MissingPatterns.jl/blob/main/notebooks/whats-new-0.7.ipynb) | What 0.7 adds, on the getting-started table: Little's MCAR test — including the mechanism it cannot see — pattern tables ordered by structure, grouped plots without the grouping column, row labels in HTML, and two releases of a table compared by key with `plotmissingdiff(...; on)`. |
+| [`whats-new-0.7.ipynb`](notebooks/whats-new-0.7.ipynb) [![Open in Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/github/dantebertuzzi/MissingPatterns.jl/blob/main/notebooks/whats-new-0.7.ipynb) | What 0.7 adds, on the getting-started table: Little's MCAR test — including the mechanism it cannot see — then `missingsentinels` finding the coded absences and `missingpredictors` finding that mechanism, pattern tables ordered by structure, grouped plots without the grouping column, row labels in HTML, and two releases of a table compared by key with `plotmissingdiff(...; on)`. |
 
 ## Functions
 
@@ -62,6 +62,8 @@ being executed.
 | [`missingrows`](#missingrows--per-row-completeness) | *How many* values are missing per row (what listwise deletion costs) |
 | [`missingdrop`](#missingdrop--what-dropping-a-column-buys) | Which column to drop to buy back complete rows |
 | [`missingmcar`](#missingmcar--littles-mcar-test) | Little's test of missing completely at random |
+| [`missingsentinels`](#missingsentinels--absence-that-does-not-say-missing) | Values that probably encode absence (`9`, `""`, `"NA"`…), ready for `isna` |
+| [`missingpredictors`](#missingpredictors--what-the-missingness-depends-on) | What a column's missingness depends on (the MAR diagnostic) |
 | [`missinghtml`](#missinghtml--html-heatmap-export) | The heatmap as a standalone HTML fragment |
 | [`missingreport`](#missingreport--one-object-two-media) | The heatmap as an object that renders itself in terminal *or* HTML |
 
@@ -374,6 +376,75 @@ column with a real element type is used (`Bool` excluded), and rows with nothing
 observed are left out. The result also carries the EM estimates (`mu`, `sigma`)
 and whether EM converged.
 
+### `missingsentinels` — Absence that does not say `missing`
+
+Administrative microdata code absence as values — `9` for "ignored", `999` for
+"not stated", an empty string, `"NA"`, `"ignorado"`. `isna` counts them as
+missing, but someone has to find them first. `missingsentinels` proposes
+candidates, each with the evidence for it:
+
+```julia
+found = missingsentinels(tbl)
+DataFrame(found)
+```
+
+```
+ Row │ column     value  n      pct      reason
+─────┼───────────────────────────────────────────────────────────────────
+   1 │ schooling  99       206     20.6  above every other value (max 3)
+```
+
+Text is proposed when it is blank or reads as absent. A numeric code (`9`,
+`99`, …, `-1`, `-9`, …) is only proposed when the data back it: it lies beyond
+every other value of its column, past a gap, or it is at least five times as
+frequent as the values around it — so `9` in a 0–9 scale, or `99` in an age
+column that reaches 105, is left alone. Codes stored as text (`"9"` among
+`"1"`…`"5"`) are judged as numbers. The rules are on the
+*Methods* page of the documentation.
+
+These are **candidates for review**. Keep the ones that are codes and turn
+them into the per-column `isna` every other function takes:
+
+```julia
+isna = sentinelisna(found)                                  # all of them
+isna = sentinelisna(filter(r -> r.column != :age, found))   # all but one column
+missingsummary(tbl; isna)
+```
+
+### `missingpredictors` — What the missingness depends on
+
+[`missingmcar`](#missingmcar--littles-mcar-test) says *whether* the missingness is related to the data;
+`missingpredictors` says *to what*. For one column, every other column is
+compared between the rows where it is missing and the rows where it is
+present — Welch's t-test for numbers and dates, a χ² test of independence for
+everything else — and sorted by p-value. A column that differs predicts the
+missingness: that is the working diagnostic for MAR, and the list of variables
+an imputation model for the column must include.
+
+```julia
+missingpredictors(tbl, :income; isna)
+```
+
+```
+ column     test     pvalue    effect  detail
+ region     chisq    2.18e-08    0.20  south: 42.1% of rows where missing vs 20.9% where present
+ age        welch_t  1.82e-05    0.35  mean 60 where missing vs 52.47 where present
+ date       welch_t  0.242       0.09  mean 2022-02-18 where missing vs 2021-12-21 where present
+ schooling  welch_t  0.7         0.03  mean 1.509 where missing vs 1.472 where present
+ lab        welch_t  0.756      -0.03  mean 3.429 where missing vs 3.456 where present
+ weight     welch_t  0.87        0.02  mean 60.32 where missing vs 60.15 where present
+```
+
+Income is refused more in the south and by older respondents — which is how
+this table was built. For numeric columns `effect` is the standardized mean
+difference (0.2 small, 0.5 medium, 0.8 large by Cohen's convention); for the
+others it is Cramér's V. Dates are compared as dates, which catches what
+`missingmcar` cannot: the same call on `:lab` puts `date` first, with
+`p = 1.7e-19` and a mean a year earlier where `lab` is missing.
+
+One test is run per column, so with many columns a few unrelated ones will come
+out significant by chance; read the effect sizes alongside the p-values.
+
 ### `missinghtml` — HTML heatmap export
 
 Renders the same heatmap and color ramp as `plotmissing` as a standalone,
@@ -428,6 +499,8 @@ read here can never disagree with the one drawn on screen.
 | `missingpairstats` | unordered pair of columns | `a`, `b`, `phi`, `jaccard`, `n11`, `n1`, `n2`, `nrows` |
 | `missingrowstats` | observed missing-count | `nmissing`, `nrows`, `pct` |
 | `missingdropstats` | column-drop step | `ndropped`, `dropped`, `ncols`, `complete`, `pct`, `cells` |
+| `missingsentinels` | candidate sentinel value | `column`, `value`, `n`, `pct`, `reason` |
+| `missingpredictors` | other column | `column`, `kind`, `test`, `statistic`, `df`, `pvalue`, `effect`, `n_missing`, `n_present`, `detail` |
 
 ```julia
 using DataFrames
@@ -538,6 +611,8 @@ plotmissing(CSV.File("data.csv"))
 - **Row-completeness distribution** (`missingrows`) — what listwise deletion costs
 - **Listwise-deletion trade-off** (`missingdrop`) — which column to drop to buy back complete rows
 - **Little's MCAR test** (`missingmcar`) — the formal check of missing completely at random
+- **Sentinel detection** (`missingsentinels`, `sentinelisna`) — find the `9`s, `""`s and `"NA"`s that mean "missing", and turn them into `isna`
+- **Predictors of missingness** (`missingpredictors`) — which variables a column's missingness depends on
 - **Tables.jl data API** (`missingstats`, `missingpatternstats`, `missingpairstats`, `missingrowstats`, `missingdropstats`) — every view also available as data
 - **HTML export** (`missinghtml`) for reports and notebooks
 - **Medium-aware display** (`missingreport`) — terminal in the REPL, HTML in Jupyter/Pluto
@@ -579,8 +654,32 @@ where in the package it is used.
   for a monotone pattern, which the test suite checks EM against.
 - Press, W. H., Teukolsky, S. A., Vetterling, W. T., & Flannery, B. P. (2007).
   *Numerical Recipes: The Art of Scientific Computing* (3rd ed.), §6.2.
-  Cambridge University Press. — the series and continued-fraction evaluation of
-  the incomplete gamma function behind the p-value.
+  Cambridge University Press. — §6.2, the series and continued-fraction
+  evaluation of the incomplete gamma function behind the χ² p-values; §6.4, the
+  incomplete beta function behind the t p-values of `missingpredictors`.
+- Lanczos, C. (1964). A precision approximation of the gamma function.
+  *Journal of the Society for Industrial and Applied Mathematics, Series B:
+  Numerical Analysis*, 1(1), 86–96. <https://doi.org/10.1137/0701008> — the
+  log-gamma used by the incomplete beta function.
+
+**Predictors of missingness** (`missingpredictors`)
+
+- Welch, B. L. (1947). The generalization of 'Student's' problem when several
+  different population variances are involved. *Biometrika*, 34(1–2), 28–35.
+  <https://doi.org/10.1093/biomet/34.1-2.28> — the unequal-variance t-test and
+  its degrees of freedom.
+- Pearson, K. (1900). On the criterion that a given system of deviations from
+  the probable in the case of a correlated system of variables is such that it
+  can be reasonably supposed to have arisen from random sampling. *The London,
+  Edinburgh, and Dublin Philosophical Magazine and Journal of Science*,
+  50(302), 157–175. <https://doi.org/10.1080/14786440009463897> — the χ² test
+  of independence.
+- Cramér, H. (1946). *Mathematical Methods of Statistics*. Princeton
+  University Press. <https://doi.org/10.1515/9781400883868> — Cramér's V.
+- Cohen, J. (1988). *Statistical Power Analysis for the Behavioral Sciences*
+  (2nd ed.). Lawrence Erlbaum; reprinted 2013, Routledge.
+  <https://doi.org/10.4324/9780203771587> — the standardized mean difference
+  and its conventional 0.2 / 0.5 / 0.8 benchmarks.
 
 **Patterns and co-occurrence** (`missingpatterns`, `missingcooccurrence`, `order=:cluster`)
 
@@ -605,6 +704,15 @@ where in the package it is used.
   introduction to the R package seriation. *Journal of Statistical Software*,
   25(3). <https://doi.org/10.18637/jss.v025.i03> — seriation, of which
   `order=:cluster` is a greedy nearest-neighbour instance.
+
+**Calendar grouping** (`period=:week`)
+
+- ISO 8601-1:2019. *Date and time — Representations for information
+  interchange — Part 1: Basic rules.* International Organization for
+  Standardization. — the week numbering and week-based year.
+
+**Sentinel detection** (`missingsentinels`) has no reference: its rules are
+this package's own heuristic, written out on the *Methods* page of the documentation.
 
 **Related software**
 

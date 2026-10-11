@@ -10,9 +10,25 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [0.7.0] - 2026-10-11
 
 ### Added
+- `missingsentinels(tbl)` proposes values that probably encode absence — blank or absent-looking
+  text (`""`, `"NA"`, `"ignorado"`…), and numeric codes (`9`, `99`, …, `-1`, `-9`, …) that lie
+  beyond every other value of their column past a gap, or are at least five times as frequent as
+  their neighbours; codes stored as text are judged as numbers. Each candidate carries its
+  evidence, for review. `sentinelisna(found)` turns the accepted ones into the per-column `isna`.
+- `missingpredictors(tbl, col)` — what the missingness of `col` depends on. Every other column is
+  compared between the rows where `col` is missing and present: Welch's t-test with the
+  standardized mean difference for numbers and dates, Pearson's χ² with Cramér's V for the rest,
+  each with a `detail` naming the direction. The t p-value comes from an incomplete beta function
+  computed in the package (Lanczos log-gamma), so no dependency is added.
+- A *Methods* page in the docs writes out the formula behind every number the package reports,
+  and a *References* page lists the work behind each method (Rubin, Little, Dempster–Laird–Rubin,
+  Welch, Pearson, Yule, Jaccard, …), with DOIs; the README carries the same list, and the
+  docstrings of the methods cite their sources.
 - `notebooks/whats-new-0.7.ipynb`, the release's new features on the getting-started table:
   `missingmcar` rejecting MCAR for the income refusals and failing to see the date-driven skipped
-  visits (the test's limit, shown rather than stated), `missingpatterns(...; order=:cluster)`,
+  visits (the test's limit, shown rather than stated), `missingsentinels` finding the `99`
+  in `schooling`, `missingpredictors` finding both mechanisms including the one the test missed,
+  `missingpatterns(...; order=:cluster)`,
   grouping without the `by` column, HTML row labels, and two releases compared with
   `plotmissingdiff(...; on=:id)`. `getting-started.ipynb` and `obis-missingness.ipynb` were run
   again against this release.

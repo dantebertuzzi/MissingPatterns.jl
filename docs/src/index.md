@@ -37,7 +37,7 @@ outputs of a real run, so it also reads on GitHub.
 | Notebook | What it does |
 |---|---|
 | [`getting-started.ipynb`](https://colab.research.google.com/github/dantebertuzzi/MissingPatterns.jl/blob/main/notebooks/getting-started.ipynb) | The tour, on a table whose missingness was put there on purpose: every entry point, `isna`, grouping, the data API and an audited imputation. |
-| [`whats-new-0.7.ipynb`](https://colab.research.google.com/github/dantebertuzzi/MissingPatterns.jl/blob/main/notebooks/whats-new-0.7.ipynb) | What 0.7 adds: [`missingmcar`](@ref), pattern ordering, `exclude_by`, HTML row labels and keyed diffs. |
+| [`whats-new-0.7.ipynb`](https://colab.research.google.com/github/dantebertuzzi/MissingPatterns.jl/blob/main/notebooks/whats-new-0.7.ipynb) | What 0.7 adds: [`missingmcar`](@ref), [`missingpredictors`](@ref), [`missingsentinels`](@ref), pattern ordering, `exclude_by`, HTML row labels and keyed diffs. |
 | [`obis-missingness.ipynb`](https://colab.research.google.com/github/dantebertuzzi/MissingPatterns.jl/blob/main/notebooks/obis-missingness.ipynb) | The same diagnostics on live marine biodiversity records from OBIS. |
 
 ## Functions
@@ -52,13 +52,16 @@ outputs of a real run, so it also reads on GitHub.
 | `missingrows` | *How many* values are missing per row | [Diagnostics](@ref) |
 | `missingdrop` | Which column to drop to buy back complete rows | [Diagnostics](@ref) |
 | `missingmcar` | Little's test of missing completely at random | [Diagnostics](@ref) |
+| `missingsentinels` | Values that probably encode absence, ready for `isna` | [Diagnostics](@ref) |
+| `missingpredictors` | What a column's missingness depends on | [Diagnostics](@ref) |
 | `missinghtml` | The heatmap as a standalone HTML fragment | [Export and output](@ref) |
 | `missingreport` | The heatmap as an object that renders itself per medium | [Export and output](@ref) |
 
 Every display above has a data counterpart that returns a Tables.jl-compatible
 row table instead of printing — see [Data API](@ref).
 
-Full docstrings are in the [Public API](@ref) reference.
+Full docstrings are in the [Public API](@ref) reference, every formula is on
+the [Methods](@ref) page, and the work behind them is on [References](@ref).
 
 ## How to cite
 

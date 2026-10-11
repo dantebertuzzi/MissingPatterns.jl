@@ -9,6 +9,8 @@ view:
 - [`missingrows`](@ref) — the per-row marginals.
 - [`missingdrop`](@ref) — what dropping a column buys complete-case analysis.
 - [`missingmcar`](@ref) — Little's test of missing completely at random.
+- [`missingsentinels`](@ref) — values that probably encode absence, for `isna`.
+- [`missingpredictors`](@ref) — what a column's missingness depends on.
 
 ## `missingpatterns` — Unique missingness patterns
 
@@ -147,3 +149,72 @@ MAR from MNAR. The test is defined for continuous columns: by default every
 column with a real element type is used (`Bool` excluded), and rows with nothing
 observed are left out. The result also carries the EM estimates (`mu`, `sigma`)
 and whether EM converged.
+
+## `missingsentinels` — Absence that does not say `missing`
+
+Administrative microdata code absence as values — `9` for "ignored", `999` for
+"not stated", an empty string, `"NA"`, `"ignorado"`. `isna` counts them as
+missing, but someone has to find them first. `missingsentinels` proposes
+candidates, each with the evidence for it:
+
+```julia
+found = missingsentinels(tbl)
+DataFrame(found)
+```
+
+```
+ Row │ column     value  n      pct      reason
+─────┼───────────────────────────────────────────────────────────────────
+   1 │ schooling  99       206     20.6  above every other value (max 3)
+```
+
+Text is proposed when it is blank or reads as absent. A numeric code (`9`,
+`99`, …, `-1`, `-9`, …) is only proposed when the data back it: it lies beyond
+every other value of its column, past a gap, or it is at least five times as
+frequent as the values around it — so `9` in a 0–9 scale, or `99` in an age
+column that reaches 105, is left alone. Codes stored as text (`"9"` among
+`"1"`…`"5"`) are judged as numbers. The rules are on the
+[Methods](@ref) page.
+
+These are **candidates for review**. Keep the ones that are codes and turn
+them into the per-column `isna` every other function takes:
+
+```julia
+isna = sentinelisna(found)                                  # all of them
+isna = sentinelisna(filter(r -> r.column != :age, found))   # all but one column
+missingsummary(tbl; isna)
+```
+
+## `missingpredictors` — What the missingness depends on
+
+[`missingmcar`](@ref) says *whether* the missingness is related to the data;
+`missingpredictors` says *to what*. For one column, every other column is
+compared between the rows where it is missing and the rows where it is
+present — Welch's t-test for numbers and dates, a χ² test of independence for
+everything else — and sorted by p-value. A column that differs predicts the
+missingness: that is the working diagnostic for MAR, and the list of variables
+an imputation model for the column must include.
+
+```julia
+missingpredictors(tbl, :income; isna)
+```
+
+```
+ column     test     pvalue    effect  detail
+ region     chisq    2.18e-08    0.20  south: 42.1% of rows where missing vs 20.9% where present
+ age        welch_t  1.82e-05    0.35  mean 60 where missing vs 52.47 where present
+ date       welch_t  0.242       0.09  mean 2022-02-18 where missing vs 2021-12-21 where present
+ schooling  welch_t  0.7         0.03  mean 1.509 where missing vs 1.472 where present
+ lab        welch_t  0.756      -0.03  mean 3.429 where missing vs 3.456 where present
+ weight     welch_t  0.87        0.02  mean 60.32 where missing vs 60.15 where present
+```
+
+Income is refused more in the south and by older respondents — which is how
+this table was built. For numeric columns `effect` is the standardized mean
+difference (0.2 small, 0.5 medium, 0.8 large by Cohen's convention); for the
+others it is Cramér's V. Dates are compared as dates, which catches what
+`missingmcar` cannot: the same call on `:lab` puts `date` first, with
+`p = 1.7e-19` and a mean a year earlier where `lab` is missing.
+
+One test is run per column, so with many columns a few unrelated ones will come
+out significant by chance; read the effect sizes alongside the p-values.
