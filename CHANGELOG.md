@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.7.0] - 2026-10-11
+
 ### Added
 - `notebooks/whats-new-0.7.ipynb`, the release's new features on the getting-started table:
   `missingmcar` rejecting MCAR for the income refusals and failing to see the date-driven skipped

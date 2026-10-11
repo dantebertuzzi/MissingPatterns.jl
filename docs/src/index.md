@@ -71,7 +71,7 @@ Every release is archived on Zenodo. The repository ships a `CITATION.cff`
   title   = {{MissingPatterns.jl}: terminal-based exploration of missing
              data patterns in {Julia}},
   year    = {2026},
-  version = {0.6.0},
+  version = {0.7.0},
   doi     = {10.5281/zenodo.22217099},
   url     = {https://github.com/dantebertuzzi/MissingPatterns.jl},
   note    = {Julia package}
