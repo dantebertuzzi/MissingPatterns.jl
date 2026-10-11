@@ -5,6 +5,7 @@ authors = ["Dante Bertuzzi"]
 
 [deps]
 Dates = "ade2ca70-3891-5945-98fb-dc099432e06a"
+LinearAlgebra = "37e2e46d-f89d-539d-b4ee-838fcccc9c8e"
 PrecompileTools = "aea7be01-6a6a-4083-8856-8a6e6704d82a"
 Printf = "de0858da-6303-5e67-8744-51eddeeeb8d7"
 Tables = "bd369af6-aec1-5ad0-b16a-f7cc5008161c"
@@ -13,6 +14,7 @@ Tables = "bd369af6-aec1-5ad0-b16a-f7cc5008161c"
 Aqua = "0.8"
 DataFrames = "1"
 Dates = "1"
+LinearAlgebra = "1"
 PrecompileTools = "1"
 Printf = "1"
 Tables = "1"

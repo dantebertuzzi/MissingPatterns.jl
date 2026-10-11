@@ -8,6 +8,7 @@ view:
 - [`missingsummary`](@ref) — the per-column marginals.
 - [`missingrows`](@ref) — the per-row marginals.
 - [`missingdrop`](@ref) — what dropping a column buys complete-case analysis.
+- [`missingmcar`](@ref) — Little's test of missing completely at random.
 
 ## `missingpatterns` — Unique missingness patterns
 
@@ -105,3 +106,35 @@ does not make for you; it only prices it.
 
 The walk stops once every row is complete or one column is left. Use
 [`missingdropstats`](@ref) for the same numbers as data.
+
+## `missingmcar` — Little's MCAR test
+
+Every view above *suggests* a mechanism. `missingmcar` tests the one most
+analyses assume without saying so: that whether a value is missing has nothing
+to do with the data — *missing completely at random*. Little's (1988) test
+compares each pattern's observed means with the maximum-likelihood means of the
+whole table (estimated by EM under a multivariate normal model); under MCAR the
+weighted distance is χ²-distributed.
+
+```julia
+r = missingmcar(tbl)                              # every real-valued column
+r = missingmcar(tbl; columns=[:age, :weight])     # a subset
+r = missingmcar(tbl; isna=(income = x -> ismissing(x) || x == 99,))
+```
+
+On a table where older respondents refuse to state their income:
+
+```
+julia> missingmcar(tbl)
+(statistic = 124.6, df = 5, pvalue = 3.3e-25, npatterns = 4, ...)
+
+julia> missingmcar(tbl; columns=[:age, :weight])  # weight is missing at random
+(statistic = 0.3, df = 1, pvalue = 0.585, ...)
+```
+
+A small p-value is evidence *against* MCAR, so complete-case analysis is likely
+biased. A large one fails to reject it; it does not prove it, and it cannot tell
+MAR from MNAR. The test is defined for continuous columns: by default every
+column with a real element type is used (`Bool` excluded), and rows with nothing
+observed are left out. The result also carries the EM estimates (`mu`, `sigma`)
+and whether EM converged.

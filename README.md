@@ -60,6 +60,7 @@ being executed.
 | [`plotmissingdiff`](#plotmissingdiff--beforeafter-comparison) | Before/after diff (e.g. auditing an imputation step) |
 | [`missingrows`](#missingrows--per-row-completeness) | *How many* values are missing per row (what listwise deletion costs) |
 | [`missingdrop`](#missingdrop--what-dropping-a-column-buys) | Which column to drop to buy back complete rows |
+| [`missingmcar`](#missingmcar--littles-mcar-test) | Little's test of missing completely at random |
 | [`missinghtml`](#missinghtml--html-heatmap-export) | The heatmap as a standalone HTML fragment |
 | [`missingreport`](#missingreport--one-object-two-media) | The heatmap as an object that renders itself in terminal *or* HTML |
 
@@ -277,6 +278,16 @@ plotmissingdiff(before, after)
 plotmissingdiff(before, after; color=:always)
 ```
 
+When the two releases do not line up row for row — re-sorted, filtered or
+appended to — pair them by a key column instead of by position:
+
+```julia
+plotmissingdiff(release_2023, release_2024; on=:id)
+```
+
+Only keys present on both sides are compared; the summary says how many rows
+each side had that the other did not.
+
 ### `missingrows` — Per-row completeness
 
 The transposed view: not *which* columns are missing, but *how many* values
@@ -324,6 +335,38 @@ Dropping `lab` alone takes complete-case analysis from 626 rows to 940, at the
 price of one variable. The flag marks the step maximizing `complete × columns
 left` — the size of the surviving complete-case block. Whether that trade is
 worth making is a modeling judgment; the package only prices it.
+
+### `missingmcar` — Little's MCAR test
+
+Every view above *suggests* a mechanism. `missingmcar` tests the one most
+analyses assume without saying so: that whether a value is missing has nothing
+to do with the data — *missing completely at random*. Little's (1988) test
+compares each pattern's observed means with the maximum-likelihood means of the
+whole table (estimated by EM under a multivariate normal model); under MCAR the
+weighted distance is χ²-distributed.
+
+```julia
+r = missingmcar(tbl)                              # every real-valued column
+r = missingmcar(tbl; columns=[:age, :weight])     # a subset
+r = missingmcar(tbl; isna=(income = x -> ismissing(x) || x == 99,))
+```
+
+On a table where older respondents refuse to state their income:
+
+```
+julia> missingmcar(tbl)
+(statistic = 124.6, df = 5, pvalue = 3.3e-25, npatterns = 4, ...)
+
+julia> missingmcar(tbl; columns=[:age, :weight])  # weight is missing at random
+(statistic = 0.3, df = 1, pvalue = 0.585, ...)
+```
+
+A small p-value is evidence *against* MCAR, so complete-case analysis is likely
+biased. A large one fails to reject it; it does not prove it, and it cannot tell
+MAR from MNAR. The test is defined for continuous columns: by default every
+column with a real element type is used (`Bool` excluded), and rows with nothing
+observed are left out. The result also carries the EM estimates (`mu`, `sigma`)
+and whether EM converged.
 
 ### `missinghtml` — HTML heatmap export
 
@@ -487,6 +530,7 @@ plotmissing(CSV.File("data.csv"))
 - **Before/after diffing** (`plotmissingdiff`) for auditing imputation steps
 - **Row-completeness distribution** (`missingrows`) — what listwise deletion costs
 - **Listwise-deletion trade-off** (`missingdrop`) — which column to drop to buy back complete rows
+- **Little's MCAR test** (`missingmcar`) — the formal check of missing completely at random
 - **Tables.jl data API** (`missingstats`, `missingpatternstats`, `missingpairstats`, `missingrowstats`, `missingdropstats`) — every view also available as data
 - **HTML export** (`missinghtml`) for reports and notebooks
 - **Medium-aware display** (`missingreport`) — terminal in the REPL, HTML in Jupyter/Pluto

@@ -123,7 +123,7 @@ group just as `missing` does. It is available on every entry point, including
 ## `plotmissingdiff` — Before/after comparison
 
 Compares two versions of a dataset and highlights cells where missing
-values were resolved (+) or introduced (−).
+values were resolved (`-`, fewer missing) or introduced (`+`, more missing).
 
 ```julia
 before = (a=[missing, 2, missing, 4], b=[1, missing, 3, 4])
@@ -132,6 +132,16 @@ after  = (a=[1,       2, 3,       4], b=[1, 2,       missing, 4])
 plotmissingdiff(before, after)
 plotmissingdiff(before, after; color=:always)
 ```
+
+When the two releases do not line up row for row — re-sorted, filtered or
+appended to — pair them by a key column instead of by position:
+
+```julia
+plotmissingdiff(release_2023, release_2024; on=:id)
+```
+
+Only keys present on both sides are compared; the summary says how many rows
+each side had that the other did not.
 
 ## Large Datasets
 

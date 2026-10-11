@@ -25,6 +25,12 @@ function rendered(f, args...; kwargs...)
     return String(take!(buf))
 end
 
+"HTML rendering of `x`, through `show` as a notebook would ask for it."
+show_html(x) = sprint(show, MIME"text/html"(), x)
+
+"Γ(x) for half-integers, by recurrence from Γ(1/2) = √π and Γ(1) = 1."
+gamma_ref(x) = x == 0.5 ? sqrt(π) : x == 1 ? 1.0 : (x - 1) * gamma_ref(x - 1)
+
 "Synthetic wide/tall table (Tables.jl-compatible NamedTuple of vectors)."
 function bigtable(nrows=10_000, ncols=25; miss_every=17)
     make(j) = [i % (miss_every + j) == 0 ? missing : Float64(i) for i in 1:nrows]
@@ -1589,6 +1595,167 @@ end
 
         # default IO
         @test occursin("drop", sprint(io -> missingdrop(io, tbl)))
+    end
+
+    # =========================================================================
+    # missingpatterns order
+    # =========================================================================
+    @testset "missingpatterns order" begin
+        # a and c always go missing together; b never does
+        tbl = (a = [missing, 1, missing, 4], b = [1, missing, 3, 4],
+               c = [missing, 2, missing, 4])
+        header(out) = split(strip_ansi(out), '\n')[2]
+        out = rendered(missingpatterns, tbl; order=:cluster, color=:never)
+        @test occursin(r"a\s*┃\s*c", header(out))
+        out_n = rendered(missingpatterns, (z = [missing, 1], y = [1, 2]); order=:name,
+                         color=:never)
+        @test findfirst("y", header(out_n)) < findfirst("z", header(out_n))
+        # reordering moves columns, never counts
+        ps = compute_pattern_stats(tbl)
+        rp = MissingPatterns._reorder_patterns(ps, :cluster)
+        @test rp.counts == ps.counts
+        for (k, name) in enumerate(rp.colnames)
+            j = findfirst(==(name), ps.colnames)
+            @test rp.pattern_missing[:, k] == ps.pattern_missing[:, j]
+        end
+        @test_throws ArgumentError missingpatterns(IOBuffer(), tbl; order=:bogus)
+    end
+
+    # =========================================================================
+    # exclude_by
+    # =========================================================================
+    @testset "exclude_by" begin
+        tbl = (g = ["x", "x", missing, "y"], a = [1, missing, 3, 4], b = [1, 2, missing, 4])
+        st = compute_missing_stats_grouped(tbl, :g; max_rows=50, max_cols=20)
+        @test st.colnames == ["a", "b"]
+        @test st.ncols == 2 && st.total_cells == 8 && st.missing_count == 2
+        st_k = compute_missing_stats_grouped(tbl, :g; max_rows=50, max_cols=20,
+                                             exclude_by=false)
+        @test st_k.colnames == ["g", "a", "b"]
+        @test st_k.missing_count == 3
+
+        out = strip_ansi(rendered(plotmissing, tbl; by=:g, color=:never, layout=:classic))
+        @test occursin("4 × 2 table", out)
+        out_k = strip_ansi(rendered(plotmissing, tbl; by=:g, exclude_by=false,
+                                    color=:never, layout=:classic))
+        @test occursin("4 × 3 table", out_k)
+        @test !occursin(">g ", missinghtml(tbl; by=:g))
+        @test occursin(">g ", missinghtml(tbl; by=:g, exclude_by=false))
+
+        # a table that is nothing but the `by` column keeps it
+        only_by = (g = ["x", missing],)
+        @test compute_missing_stats_grouped(only_by, :g; max_rows=50, max_cols=20).ncols == 1
+        # reordering composes with exclusion
+        st_o = compute_missing_stats_grouped(tbl, :g; max_rows=50, max_cols=20,
+                                             colorder=[3, 1, 2])
+        @test st_o.colnames == ["b", "a"]
+    end
+
+    # =========================================================================
+    # missinghtml row labels
+    # =========================================================================
+    @testset "missinghtml row labels" begin
+        tbl = (a = [1, missing, 3], b = [missing, 5, 6])
+        plain = missinghtml(tbl)
+        @test !occursin("auto repeat", plain)
+        labeled = missinghtml(tbl; show_row_range=true)
+        @test occursin("auto repeat", labeled)
+        @test occursin(">2</div>", labeled)          # row label of the second row
+        grouped = missinghtml((g = ["<x>", "y", "y"], v = [1, missing, 3]); by=:g)
+        @test occursin(">&lt;x&gt;</div>", grouped)   # labels are escaped
+        @test occursin("auto repeat", show_html(missingreport(tbl; show_row_range=true)))
+    end
+
+    # =========================================================================
+    # plotmissingdiff on=
+    # =========================================================================
+    @testset "plotmissingdiff on" begin
+        before = (id = [1, 2, 3, 4], a = [1, missing, 3, missing], b = [missing, 2, 3, 4])
+        # same records, shuffled, columns permuted, one record added
+        after = (b = [4, 3, missing, missing, 9], id = [4, 3, 2, 1, 7],
+                 a = [4, 3, 2, 1, 0])
+        out = strip_ansi(rendered(plotmissingdiff, before, after; on=:id, color=:never))
+        @test occursin("resolved 2", out)        # a filled on ids 2 and 4
+        @test occursin("introduced 1", out)      # b lost on id 2
+        @test occursin("4 rows matched on id", out)
+        @test occursin("1 only after", out)
+        @test !occursin("only before", out)
+        @test !occursin(" id ", out)             # the key is not drawn
+
+        # positional comparison of the shuffled tables would be wrong, and is refused
+        @test_throws ArgumentError plotmissingdiff(IOBuffer(), before, after)
+
+        dup = merge(after, (id = [4, 4, 2, 1, 7],))
+        @test_throws ArgumentError plotmissingdiff(IOBuffer(), before, dup; on=:id)
+        nokey = merge(after, (id = [4, missing, 2, 1, 7],))
+        @test_throws ArgumentError plotmissingdiff(IOBuffer(), before, nokey; on=:id)
+        @test_throws ArgumentError plotmissingdiff(IOBuffer(), before, after; on=:nope)
+        @test_throws ArgumentError plotmissingdiff(IOBuffer(), before,
+                                                   (id = [4, 3], a = [1, 2]); on=:id)
+        @test_throws ArgumentError plotmissingdiff(IOBuffer(), before,
+                                                   merge(after, (id = [8, 9, 10, 11, 12],));
+                                                   on=:id)
+    end
+
+    # =========================================================================
+    # missingmcar
+    # =========================================================================
+    @testset "χ² survival function" begin
+        sf = MissingPatterns._chisq_sf
+        @test sf(3.841458820694124, 1) ≈ 0.05 atol=1e-12
+        @test sf(18.307038053275146, 10) ≈ 0.05 atol=1e-12
+        @test sf(5.991464547107979, 2) ≈ 0.05 atol=1e-12
+        @test sf(0.0, 3) == 1.0
+        @test sf(2.0, 2) ≈ exp(-1.0)              # χ²(2) is Exp(1/2)
+        for m in 1:12
+            @test MissingPatterns._lgamma_half(m) ≈ log(gamma_ref(m / 2))
+        end
+    end
+
+    @testset "missingmcar" begin
+        # EM agrees with the closed-form ML of a monotone bivariate pattern
+        x1 = [-1.2, 0.4, 2.1, -0.3, 0.9, 1.5, -2.0, 0.1, 0.7, -0.8, 1.1, -1.5]
+        x2 = [0.5, 2.3, 4.0, 1.6, missing, missing, -0.4, 2.0, missing, 1.1, missing, 0.2]
+        r = missingmcar((x1 = x1, x2 = x2))
+        cc = .!ismissing.(x2)
+        y1, y2 = x1[cc], Float64.(x2[cc])
+        m1c, m2c = sum(y1) / length(y1), sum(y2) / length(y2)
+        b = sum((y1 .- m1c) .* (y2 .- m2c)) / sum((y1 .- m1c) .^ 2)
+        @test r.converged
+        @test r.mu[1] ≈ sum(x1) / length(x1)
+        @test r.mu[2] ≈ m2c + b * (sum(x1) / length(x1) - m1c) atol=1e-6
+        @test r.df == 1 && r.npatterns == 2 && r.nrows == 12
+        @test 0 <= r.pvalue <= 1
+        @test r.columns == [:x1, :x2]
+
+        # missing on high x1 is detected
+        xs = collect(range(-2, 2; length=60))
+        ys = Union{Missing,Float64}[x > 0.5 ? missing : 1 + x + 0.1 * sin(7x) for x in xs]
+        @test missingmcar((x = xs, y = ys)).pvalue < 1e-6
+
+        # complete data: nothing to compare
+        rc = missingmcar((a = [1.0, 2.0, 4.0], b = [3.0, 1.0, 2.0]))
+        @test rc.statistic ≈ 0 atol=1e-12
+        @test rc.df == 0 && isnan(rc.pvalue)
+
+        # column selection, non-numeric columns skipped by default
+        mixed = (a = [1.0, missing, 3.0, 4.0, 2.5], s = ["x", "y", missing, "z", "w"],
+                 f = [true, false, true, missing, true], b = [2.0, 1.0, missing, 5.0, 3.5])
+        @test missingmcar(mixed).columns == [:a, :b]
+        @test missingmcar(mixed; columns=["b", :a]).columns == [:b, :a]
+        @test_throws ArgumentError missingmcar(mixed; columns=[:s])
+        @test_throws ArgumentError missingmcar(mixed; columns=[:nope])
+        @test_throws ArgumentError missingmcar(mixed; columns=[:a, :a])
+        @test_throws ArgumentError missingmcar((s = ["x", "y"],))
+        @test_throws ArgumentError missingmcar((a = [1.0, 1.0, 1.0, 1.0],
+                                                b = [1.0, missing, 3.0, 2.0]))  # constant
+        # rows with nothing observed are left out
+        @test missingmcar((a = [1.0, missing, 3.0, 2.0, 5.0],
+                           b = [2.0, missing, missing, 1.0, 4.0])).nrows == 4
+        # isna reaches the test
+        sent = (a = [1.0, 99.0, 3.0, 2.0, 5.0, 4.0], b = [2.0, 1.0, 3.0, 5.0, 4.0, 6.0])
+        @test missingmcar(sent).df == 0
+        @test missingmcar(sent; isna=(a = x -> ismissing(x) || x == 99,)).df == 1
     end
 
     @testset "documented examples run" begin

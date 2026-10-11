@@ -19,8 +19,31 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   run, so they read on GitHub without being executed.
 - `missingpatterns` accepts `color=:auto|:always|:never`, like every other renderer, so its
   colored cells can be forced on in notebooks, whose `stdout` is not a TTY.
+- `missingmcar` — Little's (1988) test of missing completely at random. Each pattern's observed
+  means are compared with maximum-likelihood means estimated by EM under a multivariate normal
+  model; returns the statistic, degrees of freedom, p-value and the EM estimates. EM runs on
+  per-pattern sufficient statistics, so an iteration costs O(patterns × p³) whatever the row
+  count, and the χ² tail is computed in the package. Adds the `LinearAlgebra` stdlib as a
+  dependency.
+- `plotmissingdiff(...; on=:id)` pairs rows by a key column instead of by position, so two
+  releases that were re-sorted, filtered or appended to still compare record by record. The
+  summary reports the rows found on only one side.
+- `missingpatterns(...; order)` — the column orders of `plotmissing` (`:table`, `:missing`,
+  `:name`, `:cluster`), computed from the pattern table itself, without another pass over the
+  data.
+- `missinghtml(...; show_row_range)` draws row-range (or group) labels left of the grid, on by
+  default when `by` is set — before, they were only in the tooltips. `missingreport` forwards it
+  to both media.
+
+### Changed
+- Grouping with `by` leaves the `by` column itself out of the grid (`exclude_by=true`, the new
+  default, on `plotmissing`, `missinghtml` and `missingreport`): it only restated the grouping,
+  present in every group and missing in `∅`. The summary's dimensions and totals now cover the
+  remaining columns. Pass `exclude_by=false` for the previous output.
 
 ### Fixed
+- The docs described `plotmissingdiff`'s glyphs the wrong way round: `+` marks introduced
+  missing values and `-` resolved ones, as the README already said.
 - The classic summary's progress bar drew both of its segments with `'█'`, so without color it
   read as full whatever the missing share. The present segment now uses `'░'` when color is off.
 - The classic summary called every source a "DataFrame"; it now says "table", since any
