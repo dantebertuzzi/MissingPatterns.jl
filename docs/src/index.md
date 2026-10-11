@@ -30,7 +30,7 @@ plotmissing(tbl)
 
 ## Notebooks
 
-Three notebooks run in Google Colab with nothing to install — pick the Julia
+Four notebooks run in Google Colab with nothing to install — pick the Julia
 runtime under *Runtime ▸ Change runtime type*. Each is committed with the
 outputs of a real run, so it also reads on GitHub.
 
@@ -38,6 +38,7 @@ outputs of a real run, so it also reads on GitHub.
 |---|---|
 | [`getting-started.ipynb`](https://colab.research.google.com/github/dantebertuzzi/MissingPatterns.jl/blob/main/notebooks/getting-started.ipynb) | The tour, on a table whose missingness was put there on purpose: every entry point, `isna`, grouping, the data API and an audited imputation. |
 | [`whats-new-0.7.ipynb`](https://colab.research.google.com/github/dantebertuzzi/MissingPatterns.jl/blob/main/notebooks/whats-new-0.7.ipynb) | What 0.7 adds: [`missingmcar`](@ref), [`missingpredictors`](@ref), [`missingsentinels`](@ref), pattern ordering, `exclude_by`, HTML row labels and keyed diffs. |
+| [`novidades-0.7.ipynb`](https://colab.research.google.com/github/dantebertuzzi/MissingPatterns.jl/blob/main/notebooks/novidades-0.7.ipynb) | In Portuguese: the 0.7 features on a simulated SUS-style table, with the formula of each diagnostic beside the code. |
 | [`obis-missingness.ipynb`](https://colab.research.google.com/github/dantebertuzzi/MissingPatterns.jl/blob/main/notebooks/obis-missingness.ipynb) | The same diagnostics on live marine biodiversity records from OBIS. |
 
 ## Functions

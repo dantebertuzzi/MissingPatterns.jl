@@ -7,6 +7,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+- `notebooks/novidades-0.7.ipynb`, the 0.7 features explained in Portuguese on a simulated table
+  in the style of SUS notification data (`9` for "ignorado" in schooling, `"Ignorado"` and blanks
+  in race, income refused in the Southeast and by the over-65s, lab results lost during the
+  pandemic), with the formula of each diagnostic in the markdown beside the code. A chance
+  finding — schooling "predicting" refused income at p ≈ 0.001 with no mechanism behind it — is
+  kept and used to explain multiple testing and the Bonferroni correction (Dunn, 1961).
+
 ## [0.7.0] - 2026-10-11
 
 ### Added
