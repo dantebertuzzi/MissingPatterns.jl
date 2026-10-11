@@ -17,6 +17,27 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   biodiversity records pulled live from OBIS with `OBISClient`, and checks the sample against
   OBIS's own per-field counts for the whole query. Both are committed with the outputs of a real
   run, so they read on GitHub without being executed.
+- `missingpatterns` accepts `color=:auto|:always|:never`, like every other renderer, so its
+  colored cells can be forced on in notebooks, whose `stdout` is not a TTY.
+
+### Fixed
+- The classic summary's progress bar drew both of its segments with `'█'`, so without color it
+  read as full whatever the missing share. The present segment now uses `'░'` when color is off.
+- The classic summary called every source a "DataFrame"; it now says "table", since any
+  Tables.jl source (`CSV.File`, a NamedTuple of vectors, ...) is accepted.
+- Text too wide for its cell (a long column name with `name_width=0`, say) was cut silently, so
+  `uma_coluna_muito_longa` showed as a plausible `uma_col`. It now ends in `…`.
+
+### Performance
+- The heatmap's per-column tally (`plotmissing`, `missinghtml`, `missingsummary`) sums block by
+  block instead of dividing every row index, which lets the loop vectorize: ~19x faster on a
+  2M-row column.
+- Pattern analysis on tables wider than 64 columns (`missingpatterns`, `missingcooccurrence`,
+  `order=:cluster`, `missingdrop` and the data API) packs each row into a tuple of `UInt64` words
+  instead of allocating a `BitVector` per row: ~9x faster at 65 columns × 200k rows, now close to
+  the single-word path.
+- Pattern deduplication does one hash lookup per row instead of three, keeping first-appearance
+  order through slot indices: a further ~3x on pattern-heavy tables at any width.
 
 ## [0.6.0] - 2026-09-02
 

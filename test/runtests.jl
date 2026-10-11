@@ -773,6 +773,80 @@ end
         @test_throws ArgumentError missingpatterns(IOBuffer(), tbl; emphasis=:invalid)
     end
 
+    @testset "missingpatterns color kwarg" begin
+        tbl = (a = [1, missing, 3], b = [missing, 5, 6])
+        @test occursin(ANSI_RE, rendered(missingpatterns, tbl; color=:always))
+        buf = IOBuffer()
+        missingpatterns(IOContext(buf, :color => true), tbl; color=:never)
+        @test !occursin(ANSI_RE, String(take!(buf)))
+        @test_throws ArgumentError missingpatterns(IOBuffer(), tbl; color=:sometimes)
+    end
+
+    @testset "progress bar without color" begin
+        # 3 of 4 cells missing: without color the present share must still be
+        # told apart from the missing share, by glyph.
+        tbl = (a = [missing, missing], b = [missing, 1])
+        out = rendered(plotmissing, tbl; color=:never, layout=:classic)
+        bar = only(l for l in split(out, '\n') if occursin("Progress Bar:", l))
+        nm, np = count(==('█'), bar), count(==('░'), bar)
+        @test np > 0 && nm > 0
+        @test nm / (nm + np) ≈ 0.75 atol=0.05
+    end
+
+    @testset "summary names a generic table" begin
+        out = rendered(plotmissing, (a = [1, missing],); color=:never, layout=:classic)
+        @test occursin("2 × 1 table", out)
+        @test !occursin("DataFrame", out)
+    end
+
+    @testset "overlong cell text ends in an ellipsis" begin
+        tbl = (uma_coluna_muito_longa = [1, missing],)
+        out = rendered(plotmissing, tbl; color=:never, layout=:classic, name_width=0)
+        @test occursin("uma_co…", out)
+        @test !occursin("uma_col ", out)
+    end
+
+    @testset "pattern ties break on first appearance" begin
+        # three patterns, two rows each: order must follow first appearance
+        tbl = (a = [1, missing, 1, 1, missing, 1],
+               b = [1, 1, missing, 1, 1, missing])
+        ps = compute_pattern_stats(tbl)
+        @test ps.counts == [2, 2, 2]
+        @test ps.pattern_missing == Bool[0 0; 1 0; 0 1]
+    end
+
+    @testset "_accumulate_column! matches a per-row tally" begin
+        col = [i % 7 == 0 || i % 11 == 0 ? missing : i for i in 1:1000]
+        for rpc in (1, 3, 64, 333, 1000, 5000)
+            got = zeros(Int, cld(1000, rpc))
+            total = MissingPatterns._accumulate_column!(got, col, rpc)
+            want = zeros(Int, cld(1000, rpc))
+            for i in eachindex(col)
+                ismissing(col[i]) && (want[div(i - 1, rpc) + 1] += 1)
+            end
+            @test got == want
+            @test total == count(ismissing, col)
+        end
+    end
+
+    @testset "wide (>64 cols) patterns match a brute-force count" begin
+        for nc in (65, 128, 130)
+            tbl = bigtable(500, nc; miss_every=5)
+            ps = compute_pattern_stats(tbl)
+            ref = Dict{Vector{Bool},Int}()
+            for i in 1:500
+                k = [ismissing(Tables.getcolumn(tbl, j)[i]) for j in 1:nc]
+                ref[k] = get(ref, k, 0) + 1
+            end
+            @test length(ps.counts) == length(ref)
+            @test sum(ps.counts) == 500
+            @test issorted(ps.counts; rev=true)
+            for p in eachindex(ps.counts)
+                @test ref[collect(ps.pattern_missing[p, :])] == ps.counts[p]
+            end
+        end
+    end
+
     # =========================================================================
     # plotmissingdiff
     # =========================================================================
