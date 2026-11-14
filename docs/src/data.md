@@ -14,7 +14,8 @@ screen.
 | `missingrowstats` | observed missing-count | `nmissing`, `nrows`, `pct` |
 | `missingdropstats` | column-drop step | `ndropped`, `dropped`, `ncols`, `complete`, `pct`, `cells` |
 | `missingsentinels` | candidate sentinel value | `column`, `value`, `n`, `pct`, `reason` |
-| `missingpredictors` | other column | `column`, `kind`, `test`, `statistic`, `df`, `pvalue`, `effect`, `n_missing`, `n_present`, `detail` |
+| `missingpredictors` | other column | `column`, `kind`, `test`, `statistic`, `df`, `pvalue`, `padj`, `effect`, `n_missing`, `n_present`, `detail` |
+| `missinggapstats` | column | `column`, `nmissing`, `ngaps`, `longest`, `longest_start`, `longest_stop`, `mean_length`, `isolated` |
 
 ```julia
 using DataFrames

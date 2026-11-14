@@ -62,6 +62,21 @@ where in the package it is used.
   <https://doi.org/10.4324/9780203771587> — the standardized mean difference
   and its conventional 0.2 / 0.5 / 0.8 benchmarks.
 
+**Multiple testing** (`missingpredictors`, `adjust`)
+
+- Holm, S. (1979). A simple sequentially rejective multiple test procedure.
+  *Scandinavian Journal of Statistics*, 6(2), 65–70.
+  <https://www.jstor.org/stable/4615733> — the step-down adjustment behind the
+  default `padj`.
+- Benjamini, Y., & Hochberg, Y. (1995). Controlling the false discovery rate: a
+  practical and powerful approach to multiple testing. *Journal of the Royal
+  Statistical Society: Series B*, 57(1), 289–300.
+  <https://doi.org/10.1111/j.2517-6161.1995.tb02031.x> — `adjust=:bh`.
+- Dunn, O. J. (1961). Multiple comparisons among means. *Journal of the
+  American Statistical Association*, 56(293), 52–64.
+  <https://doi.org/10.1080/01621459.1961.10482090> — the Bonferroni
+  correction, `adjust=:bonferroni`.
+
 **Patterns and co-occurrence** (`missingpatterns`, `missingcooccurrence`, `order=:cluster`)
 
 - van Buuren, S., & Groothuis-Oudshoorn, K. (2011). mice: Multivariate

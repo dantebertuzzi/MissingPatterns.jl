@@ -20,6 +20,7 @@ Exported API:
 - [`missingmcar`](@ref) — Little's test of missing completely at random.
 - [`missingsentinels`](@ref) — values that probably encode absence, for `isna`.
 - [`missingpredictors`](@ref) — what a column's missingness depends on.
+- [`missinggaps`](@ref) — whether the missing values are isolated or in blocks.
 """
 module MissingPatterns
 
@@ -27,12 +28,13 @@ using Printf
 using Dates
 using Tables
 using LinearAlgebra: Diagonal, Symmetric, cholesky, issuccess, inv, diag, dot
+using PrecompileTools: @compile_workload
 
 export plotmissing, missingpatterns, missingcooccurrence, missingsummary,
        plotmissingdiff, missinghtml, missingrows, missingdrop,
        missingstats, missingpatternstats, missingpairstats, missingrowstats,
        missingdropstats, missingreport, missingmcar, missingsentinels, sentinelisna,
-       missingpredictors
+       missingpredictors, missinggaps, missinggapstats
 
 # =============================================================================
 # Validation & small pure helpers
@@ -123,7 +125,7 @@ Canonical ecosystem convention for color-aware output: defer to the `:color`
 property of `io` via `get(io, :color, false)`. On Julia >= 1.11 this already
 resolves correctly for a raw `Base.TTY` (terminfo-based detection is wired
 into `Base.get` for `TTY`). For older Julia versions (down to the package's
-`1.6` floor) a raw, unwrapped `TTY` doesn't carry that information yet, so we
+`1.10` floor) a raw, unwrapped `TTY` doesn't carry that information yet, so we
 conservatively fall back to `io isa Base.TTY`. Callers who want to force (or
 suppress) color regardless of `io`'s concrete type should wrap it explicitly,
 e.g. `IOContext(io, :color => true)` — exactly as any other Base/ecosystem
@@ -2449,13 +2451,10 @@ plotmissingdiff(before, after; kwargs...) = plotmissingdiff(stdout, before, afte
 # STAGE 2g — HTML export
 # =============================================================================
 
-# Multi-pair `replace` needs Julia 1.7; chain single pairs to honor the 1.6 floor.
-function _html_escape(s::AbstractString)
-    t = replace(s, '&' => "&amp;")
-    t = replace(t, '<' => "&lt;")
-    t = replace(t, '>' => "&gt;")
-    return replace(t, '"' => "&quot;")
-end
+# Multi-pair `replace` substitutes in a single pass, so the `&` of an entity
+# already written is never escaped again.
+_html_escape(s::AbstractString) =
+    replace(s, '&' => "&amp;", '<' => "&lt;", '>' => "&gt;", '"' => "&quot;")
 
 _css_rgb(c::NTuple{3,Int}) = string("rgb(", c[1], ",", c[2], ",", c[3], ")")
 
@@ -3376,8 +3375,9 @@ and are left out (`nrows` reports how many were used).
 
 # Returns
 A `NamedTuple` with fields `statistic`, `df`, `pvalue`, `npatterns`, `nrows`,
-`columns` (the `Symbol`s tested), `mu` and `sigma` (the EM estimates),
-`iterations` and `converged`. `pvalue` is `NaN` when `df == 0` — a single
+`columns` (the `Symbol`s tested), `skipped` (the columns left out for not being
+real-valued, when `columns` is not given; empty otherwise), `mu` and `sigma`
+(the EM estimates), `iterations` and `converged`. `pvalue` is `NaN` when `df == 0` — a single
 complete pattern leaves nothing to compare.
 
 # Examples
@@ -3449,6 +3449,9 @@ function missingmcar(tbl; columns=nothing, isna::F=ismissing, maxiter::Int=1000,
             npatterns  = length(pats),
             nrows      = n,
             columns    = Symbol[Symbol(colnames[j]) for j in sel],
+            skipped    = columns === nothing ?
+                         Symbol[Symbol(colnames[j]) for j in 1:ncols if !numeric(j)] :
+                         Symbol[],
             mu         = μ,
             sigma      = Σ,
             iterations = iterations,
@@ -3858,7 +3861,10 @@ function _categorical_predictor(col::AbstractVector{T}, miss::BitVector, isna::F
 end
 
 """
-    missingpredictors(tbl, column; isna=ismissing, max_levels=20) -> Vector{<:NamedTuple}
+    missingpredictors(tbl, column; isna=ismissing, max_levels=20, adjust=:holm)
+        -> Vector{<:NamedTuple}
+    missingpredictors(io::IO, tbl, column; ..., alpha=0.05, bar_width=10,
+                      color=:auto, missing_color="#f3a9a9")
 
 What the missingness of `column` depends on. Every other column is compared
 between the rows where `column` is missing and the rows where it is present;
@@ -3883,14 +3889,29 @@ over-represented where `column` is missing.
 A row table, one row per other column, most significant first, with fields
 `column::Symbol`, `kind::Symbol` (`:numeric` or `:categorical`),
 `test::Symbol` (`:welch_t` or `:chisq`), `statistic`, `df`, `pvalue`,
-`effect` (all `Float64`), `n_missing`, `n_present` (rows used from each
-group) and `detail::String`.
+`padj`, `effect` (all `Float64`), `n_missing`, `n_present` (rows used from
+each group) and `detail::String`.
 
-!!! note
-    One test is run per column, so with many columns some will come out
-    "significant" by chance — at the 5% level, about one in twenty of the
-    unrelated ones. Read the effect sizes, not only the p-values, and with
-    large tables expect tiny effects to be significant.
+With an `io` first argument, the same rows are printed as a table instead —
+p-value, adjusted p-value, a bar of `|effect|` (tinted when `padj < alpha`)
+and the `detail` — and `nothing` is returned.
+
+# Multiple testing
+One test is run per column, so with many columns some will come out
+"significant" by chance — at the 5% level, about one in twenty of the
+unrelated ones. `padj` corrects for that, by `adjust`:
+
+- `:holm` (default) — Holm's (1979) step-down method: controls the chance of
+  *any* false positive, like Bonferroni, and is never less powerful.
+- `:bh` — Benjamini & Hochberg (1995): controls the expected *share* of false
+  positives among the columns declared significant; more powerful with many
+  columns.
+- `:bonferroni` — `min(1, m p)`, the simplest and most conservative.
+- `:none` — `padj == pvalue`.
+
+`m` counts only the tests that could be run (`pvalue` not `NaN`). Read the
+effect sizes alongside: with large tables tiny effects are significant even
+after adjustment.
 
 # Examples
 ```julia
@@ -3902,6 +3923,12 @@ See also [`missingmcar`](@ref), which tests all columns jointly. The formulas
 are on the *Methods* page of the documentation.
 
 # References
+- Holm, S. (1979). A simple sequentially rejective multiple test procedure.
+  *Scandinavian Journal of Statistics*, 6(2), 65–70.
+- Benjamini, Y., & Hochberg, Y. (1995). Controlling the false discovery rate:
+  a practical and powerful approach to multiple testing. *Journal of the Royal
+  Statistical Society: Series B*, 57(1), 289–300.
+  doi:10.1111/j.2517-6161.1995.tb02031.x
 - Welch, B. L. (1947). The generalization of 'Student's' problem when several
   different population variances are involved. *Biometrika*, 34(1–2), 28–35.
   doi:10.1093/biomet/34.1-2.28
@@ -3916,8 +3943,66 @@ are on the *Methods* page of the documentation.
   doi:10.4324/9780203771587) — the standardized mean difference and its
   conventional 0.2 / 0.5 / 0.8.
 """
-function missingpredictors(tbl, column; isna::F=ismissing, max_levels::Int=20) where {F}
+function missingpredictors(tbl, column; isna::F=ismissing, max_levels::Int=20,
+                           adjust::Symbol=:holm) where {F}
+    return _predictors(tbl, column, isna, max_levels, adjust).rows
+end
+
+const _ADJUST_METHODS = (:holm, :bh, :bonferroni, :none)
+const _ADJUST_LABELS = Dict(:holm => "Holm", :bh => "Benjamini–Hochberg",
+                            :bonferroni => "Bonferroni", :none => "no")
+
+"""
+    _padjust(p, method) -> Vector{Float64}
+
+Multiplicity-adjusted p-values. `NaN` entries (tests that could not be run)
+stay `NaN` and do not count towards the number of tests `m`.
+
+- `:bonferroni` — `min(1, m p)`.
+- `:holm` — step-down: the `k`-th smallest becomes
+  `max_{i ≤ k} min(1, (m − i + 1) p₍ᵢ₎)`; controls the family-wise error rate
+  like Bonferroni, never less powerful.
+- `:bh` — Benjamini–Hochberg step-up: `min_{i ≥ k} min(1, m p₍ᵢ₎ / i)`;
+  controls the false discovery rate instead.
+- `:none` — the p-values unchanged.
+"""
+function _padjust(p::AbstractVector{Float64}, method::Symbol)
+    out = fill(NaN, length(p))
+    idx = [i for i in eachindex(p) if !isnan(p[i])]
+    m = length(idx)
+    m == 0 && return out
+    o = idx[sortperm(p[idx])]
+    if method === :none
+        for i in o
+            out[i] = p[i]
+        end
+    elseif method === :bonferroni
+        for i in o
+            out[i] = min(1.0, m * p[i])
+        end
+    elseif method === :holm
+        acc = 0.0
+        for (k, i) in enumerate(o)
+            acc = max(acc, min(1.0, (m - k + 1) * p[i]))
+            out[i] = acc
+        end
+    else  # :bh
+        acc = 1.0
+        for k in m:-1:1
+            i = o[k]
+            acc = min(acc, m * p[i] / k)
+            out[i] = acc
+        end
+    end
+    return out
+end
+
+# Shared by the data and the display method: the rows, plus the target's own
+# missing count, which the display's header reports.
+function _predictors(tbl, column, isna::F, max_levels::Int, adjust::Symbol) where {F}
     max_levels >= 2 || throw(ArgumentError("max_levels must be at least 2, got $max_levels"))
+    adjust in _ADJUST_METHODS || throw(ArgumentError(
+        "adjust must be one of $(join(string.(':', _ADJUST_METHODS), ", ")), got :$adjust"))
     cols, colnames, nrows, ncols = _table_info(tbl)
     _check_isna(isna, colnames)
     name = String(column)
@@ -3932,10 +4017,7 @@ function missingpredictors(tbl, column; isna::F=ismissing, max_levels::Int=20) w
         "column \"$name\" is " * (nm == 0 ? "never" : "always") *
         " missing, so there is nothing to compare"))
 
-    R = NamedTuple{(:column, :kind, :test, :statistic, :df, :pvalue, :effect,
-                    :n_missing, :n_present, :detail),
-                   Tuple{Symbol,Symbol,Symbol,Float64,Float64,Float64,Float64,Int,Int,String}}
-    rows = R[]
+    tests = Tuple{Int,Bool,NamedTuple}[]
     for j in 1:ncols
         j == t && continue
         col = Tables.getcolumn(cols, j)
@@ -3944,14 +4026,24 @@ function missingpredictors(tbl, column; isna::F=ismissing, max_levels::Int=20) w
         numeric = (S <: Real && !(S <: Bool)) || S <: Dates.TimeType
         r = numeric ? _numeric_predictor(col, miss, pna) :
                       _categorical_predictor(col, miss, pna, max_levels)
+        push!(tests, (j, numeric, r))
+    end
+    padj = _padjust(Float64[r.pvalue for (_, _, r) in tests], adjust)
+
+    R = NamedTuple{(:column, :kind, :test, :statistic, :df, :pvalue, :padj, :effect,
+                    :n_missing, :n_present, :detail),
+                   Tuple{Symbol,Symbol,Symbol,Float64,Float64,Float64,Float64,Float64,
+                         Int,Int,String}}
+    rows = R[]
+    for (k, (j, numeric, r)) in enumerate(tests)
         push!(rows, (column = Symbol(colnames[j]), kind = numeric ? :numeric : :categorical,
                      test = numeric ? :welch_t : :chisq, statistic = r.statistic,
-                     df = r.df, pvalue = r.pvalue, effect = r.effect,
+                     df = r.df, pvalue = r.pvalue, padj = padj[k], effect = r.effect,
                      n_missing = r.n1, n_present = r.n2, detail = r.detail))
     end
     # Most significant first; undefined tests last; ties by effect size.
     sort!(rows; by = r -> (isnan(r.pvalue), r.pvalue, -abs(r.effect)))
-    return rows
+    return (rows = rows, name = name, nmissing = nm, nrows = nrows)
 end
 
 function _missing_mask!(miss::BitVector, col::AbstractVector, isna::F) where {F}
@@ -3961,6 +4053,369 @@ function _missing_mask!(miss::BitVector, col::AbstractVector, isna::F) where {F}
     end
     return miss
 end
+
+# =============================================================================
+# STAGE 2k — Terminal views of the two tests
+#
+# `missingmcar` and `missingpredictors` return data, as the tests they are. With
+# an `io` first argument they print instead, like every other view; the
+# numbers come from the very same call, so the two can never disagree.
+# =============================================================================
+
+_fmtp(p::Float64) = isnan(p) ? "—" : p < 1e-3 ? @sprintf("%.2e", p) : @sprintf("%.3f", p)
+
+_resolve_color(io::IO, color::Symbol) =
+    color === :auto ? _use_color(io) : color === :always ? true :
+    color === :never ? false :
+    throw(ArgumentError("color must be :auto, :always or :never, got :$color"))
+
+function _check_alpha(alpha::Real)
+    0 < alpha < 1 || throw(ArgumentError("alpha must be in (0, 1), got $alpha"))
+    return Float64(alpha)
+end
+
+"""
+    missingmcar(io::IO, tbl; alpha=0.05, color=:auto, missing_color="#f3a9a9",
+                columns=nothing, isna=ismissing, maxiter=1000, tol=1e-8)
+
+Little's MCAR test, printed: the columns tested and those skipped for not
+being real-valued, the statistic, its degrees of freedom and p-value,
+a one-line reading at level `alpha`, and the patterns, rows and EM iterations
+behind it. Returns `nothing`; [`missingmcar(tbl)`](@ref missingmcar) without
+`io` returns the same numbers as a `NamedTuple`.
+
+```julia
+missingmcar(stdout, df)
+missingmcar(stdout, df; columns = [:income, :age], alpha = 0.01)
+```
+"""
+function missingmcar(io::IO, tbl; alpha::Real=0.05, color::Symbol=:auto,
+                      missing_color::String="#f3a9a9", kwargs...)
+    α = _check_alpha(alpha)
+    use_color = _resolve_color(io, color)
+    tint = use_color ? _fg_rgb(_parse_hex(missing_color)) : ""
+    rst = use_color ? "\033[0m" : ""
+    r = missingmcar(tbl; kwargs...)
+
+    buf = IOBuffer()
+    nc = length(r.columns)
+    println(buf, " Little's MCAR test on ", nc, " column", nc == 1 ? "" : "s",
+            " (", join(r.columns, ", "), ")")
+    isempty(r.skipped) || println(buf, " skipped (not real-valued): ", join(r.skipped, ", "))
+    println(buf, " d² = ", @sprintf("%.4g", r.statistic), "   df = ", r.df,
+            "   p = ", _fmtp(r.pvalue))
+    if isnan(r.pvalue)
+        println(buf, " nothing to compare: a single pattern leaves zero degrees of freedom")
+    elseif r.pvalue < α
+        println(buf, ' ', tint, "▲ evidence against MCAR", rst, " at α = ", α,
+                " — the patterns differ systematically, so complete-case analysis is likely biased")
+    else
+        println(buf, " MCAR not rejected at α = ", α,
+                " — which does not establish it, nor tell MAR from MNAR")
+    end
+    println(buf, ' ', r.nrows, " row", r.nrows == 1 ? "" : "s", " used ┊ ",
+            r.npatterns, " pattern", r.npatterns == 1 ? "" : "s", " ┊ EM ",
+            r.converged ? "converged" : "did NOT converge", " in ", r.iterations,
+            " iteration", r.iterations == 1 ? "" : "s")
+    write(io, take!(buf))
+    return nothing
+end
+
+function missingpredictors(io::IO, tbl, column; isna::F=ismissing, max_levels::Int=20,
+                           adjust::Symbol=:holm, alpha::Real=0.05, bar_width::Int=10,
+                           color::Symbol=:auto, missing_color::String="#f3a9a9") where {F}
+    α = _check_alpha(alpha)
+    bar_width > 0 || throw(ArgumentError("bar_width must be positive, got $bar_width"))
+    use_color = _resolve_color(io, color)
+    res = _predictors(tbl, column, isna, max_levels, adjust)
+    rows = res.rows
+    tint = use_color ? _fg_rgb(_parse_hex(missing_color)) : ""
+    rst = use_color ? "\033[0m" : ""
+
+    buf = IOBuffer()
+    println(buf, " Missingness of ", res.name, ": ", res.nmissing, " of ", res.nrows,
+            " rows (", @sprintf("%.2f", 100 * res.nmissing / res.nrows), "%)")
+    if isempty(rows)
+        println(buf, " no other column to compare")
+        write(io, take!(buf))
+        return nothing
+    end
+
+    names = [string(r.column) for r in rows]
+    nw = clamp(maximum(length, names), 6, 24)
+    _fit(s, w) = length(s) > w ? string(first(s, w - 1), '…') : s
+    testname(r) = r.test === :welch_t ? "welch t" : "χ²"
+    effs = [isnan(r.effect) ? "—" :
+            r.kind === :numeric ? @sprintf("%+.2f", r.effect) : @sprintf("%.2f", r.effect)
+            for r in rows]
+    ew = max(6, maximum(length, effs))
+
+    println(buf, ' ', rpad("column", nw), "  ", rpad("test", 7), "  ", lpad("p", 9),
+            "  ", lpad("p adj", 9), "  ", lpad("effect", ew), "  ",
+            rpad("", bar_width), "  detail")
+    nsig = 0
+    for (k, r) in enumerate(rows)
+        sig = !isnan(r.padj) && r.padj < α
+        nsig += sig
+        print(buf, ' ', rpad(_fit(names[k], nw), nw), "  ", rpad(testname(r), 7), "  ",
+              lpad(_fmtp(r.pvalue), 9), "  ", lpad(_fmtp(r.padj), 9), "  ",
+              lpad(effs[k], ew), "  ")
+        nb = isnan(r.effect) ? 0 : round(Int, bar_width * min(abs(r.effect), 1.0))
+        nb = (nb == 0 && !isnan(r.effect) && r.effect != 0) ? 1 : nb
+        sig && write(buf, tint)
+        for _ in 1:nb
+            write(buf, sig ? '█' : '░')
+        end
+        sig && write(buf, rst)
+        println(buf, ' '^(bar_width - nb), "  ", r.detail)
+    end
+    m = count(r -> !isnan(r.pvalue), rows)
+    println(buf, ' ', nsig, " of ", m, " test", m == 1 ? "" : "s", " significant at α = ", α,
+            " after ", _ADJUST_LABELS[adjust], " adjustment ┊ effect: standardized mean ",
+            "difference for numbers and dates, Cramér's V otherwise (bar capped at 1)")
+    write(io, take!(buf))
+    return nothing
+end
+
+# =============================================================================
+# STAGE 1j/2l — Gap lengths: isolated holes or blocks
+#
+# Two columns can both be 10% missing and need opposite treatment: one has a
+# value lost here and there, which interpolation or any imputation handles; the
+# other lost a contiguous stretch of rows — a sensor down for a week, a
+# questionnaire block skipped by a whole wave — where nothing nearby is
+# observed to impute from. `missinggaps` measures the runs of consecutive
+# missing rows in each column, in table order or in the order of a `by` column.
+# =============================================================================
+
+const _GAP_BREAKS = [1, 2, 3, 6, 11, 31, 101]
+
+function _check_breaks(breaks)
+    b = collect(Int, breaks)
+    (!isempty(b) && b[1] == 1 && all(>(0), diff(b))) || throw(ArgumentError(
+        "breaks must be strictly increasing integers starting at 1, got $(breaks)"))
+    return b
+end
+
+function _gap_label(b::Vector{Int}, k::Int)
+    lo = b[k]
+    k == length(b) && return string(lo, '+')
+    hi = b[k + 1] - 1
+    return lo == hi ? string(lo) : string(lo, '–', hi)
+end
+
+"""
+    _gap_scan!(hist, col, isna, order, breaks)
+
+One pass over `col` in the row order `order` (row numbers, 1-based), tallying
+runs of consecutive absent values. `hist[k]` gains the *values* (not the runs)
+that sit in a run whose length falls in class `k` of `breaks`, so a column's
+histogram sums to its missing count. Function barrier on the column's eltype.
+"""
+function _gap_scan!(hist::AbstractVector{Int}, col::AbstractVector, isna::F,
+                    order::AbstractVector{Int}, breaks::Vector{Int}) where {F}
+    ix = eachindex(col)
+    n = length(order)
+    nmiss = ngaps = longest = lstart = lstop = isolated = 0
+    run = rstart = prev = 0
+    # One step past the end acts as a present value, closing a trailing run
+    # without a closure (which would box every counter).
+    @inbounds for k in 1:n + 1
+        absent = false
+        r = 0
+        if k <= n
+            r = order[k]
+            x = col[ix[r]]
+            absent = ismissing(x) || isna(x)
+        end
+        if absent
+            run == 0 && (rstart = r)
+            run += 1
+            nmiss += 1
+        elseif run > 0
+            ngaps += 1
+            run == 1 && (isolated += 1)
+            if run > longest
+                longest, lstart, lstop = run, rstart, prev
+            end
+            hist[searchsortedlast(breaks, run)] += run
+            run = 0
+        end
+        prev = r
+    end
+    return (nmissing = nmiss, ngaps = ngaps, longest = longest, longest_start = lstart,
+            longest_stop = lstop, isolated = isolated)
+end
+
+function _gap_table(tbl, isna::F, by, breaks::Vector{Int}) where {F}
+    cols, colnames, nrows, ncols = _table_info(tbl)
+    _check_isna(isna, colnames)
+    bj = 0
+    order = if by === nothing
+        1:nrows
+    else
+        bj = something(findfirst(==(String(by)), colnames), 0)
+        bj == 0 && throw(ArgumentError(
+            "by column \"$by\" not found; available: $(join(colnames, ", "))"))
+        sortperm(collect(Tables.getcolumn(cols, bj)))    # `missing` sorts last
+    end
+    keep = [j for j in 1:ncols if j != bj]
+    hist = zeros(Int, length(breaks), length(keep))
+    R = NamedTuple{(:column, :nmissing, :ngaps, :longest, :longest_start, :longest_stop,
+                    :mean_length, :isolated),
+                   Tuple{Symbol,Int,Int,Int,Int,Int,Float64,Int}}
+    rows = R[]
+    for (k, j) in enumerate(keep)
+        g = _gap_scan!(view(hist, :, k), Tables.getcolumn(cols, j),
+                       _isna_for(isna, Symbol(colnames[j])), order, breaks)
+        push!(rows, (column = Symbol(colnames[j]), nmissing = g.nmissing, ngaps = g.ngaps,
+                     longest = g.longest, longest_start = g.longest_start,
+                     longest_stop = g.longest_stop,
+                     mean_length = g.ngaps == 0 ? 0.0 : g.nmissing / g.ngaps,
+                     isolated = g.isolated))
+    end
+    bycol = bj == 0 ? nothing : Tables.getcolumn(cols, bj)
+    return (rows = rows, hist = hist, nrows = nrows, bycol = bycol)
+end
+
+"""
+    missinggapstats(tbl; isna=ismissing, by=nothing) -> Vector{<:NamedTuple}
+
+Runs of consecutive missing rows, per column — the data behind
+[`missinggaps`](@ref). One row per column (the `by` column excluded), with
+fields:
+
+- `column::Symbol`, `nmissing::Int`.
+- `ngaps::Int` — number of maximal runs of consecutive absent values.
+- `longest::Int` — length of the longest run; `longest_start`,
+  `longest_stop` — its first and last row (row numbers of `tbl`, `0` when
+  the column has no gap).
+- `mean_length::Float64` — `nmissing / ngaps` (`0.0` with no gap).
+- `isolated::Int` — runs of length one.
+
+Rows are taken in table order, or, with `by` naming a column, in the order of
+that column (a date, a visit number…; rows where it is `missing` last), so
+that "consecutive" means consecutive in time rather than in the file.
+
+# Examples
+```julia
+gs = missinggapstats(df; by = :date)
+filter(r -> r.longest >= 7, gs)                 # columns with a week-long hole
+[(r.column, r.isolated / r.ngaps) for r in gs if r.ngaps > 0]   # share isolated
+```
+"""
+function missinggapstats(tbl; isna::F=ismissing, by=nothing) where {F}
+    return _gap_table(tbl, isna, by, _GAP_BREAKS).rows
+end
+
+"""
+    missinggaps([io::IO=stdout], tbl; by=nothing, breaks=[1, 2, 3, 6, 11, 31, 101],
+                sortby=:longest, color=:auto, missing_color="#f3a9a9", isna=ismissing)
+
+Whether each column's missing values are isolated holes or contiguous blocks.
+Per column: the missing count, the number of gaps (runs of consecutive missing
+rows), the longest gap and the rows it spans, the mean gap length, and a
+histogram of *where the missing values sit*: each class of gap lengths gets a
+bar whose height is the share of the column's missing values lying in gaps of
+that length. A column whose bar is all on the left is missing here and there —
+easy to interpolate or impute; one whose bar is on the right lost whole
+stretches, with nothing observed nearby to impute from.
+
+# Arguments
+- `by`: a column to order the rows by before looking for runs (a date, a visit
+  number…); it is left out of the output, and the longest gap is then shown as
+  the `by` values it spans instead of row numbers. Default: table order.
+- `breaks`: the first length of each class, strictly increasing from `1`; the
+  default classes are `1`, `2`, `3–5`, `6–10`, `11–30`, `31–100`, `101+`.
+- `sortby`: `:longest` (default, longest gap first), `:missing`, `:gaps`,
+  `:name` or `:none` (table order).
+- `color` / `missing_color` / `isna`: as in [`plotmissing`](@ref).
+
+Returns `nothing`; [`missinggapstats`](@ref) returns the numbers.
+
+```julia
+missinggaps(df)
+missinggaps(df; by = :date)                     # runs in time, not in file order
+missinggaps(df; breaks = [1, 2, 8, 31])         # 1, 2–7, 8–30, 31+ days
+```
+"""
+function missinggaps(io::IO, tbl; by=nothing, breaks=_GAP_BREAKS, sortby::Symbol=:longest,
+                      color::Symbol=:auto, missing_color::String="#f3a9a9",
+                      isna::F=ismissing) where {F}
+    sortby in (:longest, :missing, :gaps, :name, :none) || throw(ArgumentError(
+        "sortby must be :longest, :missing, :gaps, :name or :none, got :$sortby"))
+    use_color = _resolve_color(io, color)
+    b = _check_breaks(breaks)
+    t = _gap_table(tbl, isna, by, b)
+    rows, hist = t.rows, t.hist
+    if t.nrows == 0 || isempty(rows)
+        println(io, "Empty table — nothing to display")
+        return nothing
+    end
+
+    order = sortby === :longest ? sortperm(rows; by = r -> (-r.longest, -r.nmissing)) :
+            sortby === :missing ? sortperm(rows; by = r -> -r.nmissing) :
+            sortby === :gaps    ? sortperm(rows; by = r -> -r.ngaps) :
+            sortby === :name    ? sortperm(rows; by = r -> string(r.column)) :
+                                  collect(eachindex(rows))
+
+    ramp = ColorRamp(_PRESENT_RGB, _parse_hex(missing_color), :missing)
+    rst = use_color ? "\033[0m" : ""
+    _fit(s, w) = length(s) > w ? string(first(s, w - 1), '…') : s
+    names = [string(r.column) for r in rows]
+    nw = clamp(maximum(length, names), 6, 24)
+    labels = [_gap_label(b, k) for k in eachindex(b)]
+    cws = [max(length(l), 3) for l in labels]
+    # With `by`, the longest gap is shown in its own units (dates, visits…):
+    # row numbers would jump around, the rows having been reordered.
+    bycol = t.bycol
+    byval(i) = string(bycol[eachindex(bycol)[i]])
+    span(r) = r.ngaps == 0 ? "—" :
+              bycol === nothing ?
+                  (r.longest == 1 ? string(r.longest_start) :
+                                    string(r.longest_start, '–', r.longest_stop)) :
+              r.longest == 1 ? byval(r.longest_start) :
+              string(byval(r.longest_start), " … ", byval(r.longest_stop))
+    spanhead = bycol === nothing ? "rows" : _fit(string(by), 24)
+    sw = max(length(spanhead), maximum(r -> length(span(r)), rows))
+
+    buf = IOBuffer()
+    print(buf, ' ', rpad("column", nw), "  ", lpad("missing", 8), "  ", lpad("gaps", 6), "  ",
+          lpad("longest", 7), "  ", rpad(spanhead, sw), "  ", lpad("mean", 6), "  │")
+    for k in eachindex(b)
+        print(buf, ' ', rpad(labels[k], cws[k]))
+    end
+    write(buf, '\n')
+    for i in order
+        r = rows[i]
+        print(buf, ' ', rpad(_fit(names[i], nw), nw), "  ", lpad(string(r.nmissing), 8), "  ",
+              lpad(string(r.ngaps), 6), "  ", lpad(string(r.longest), 7), "  ",
+              rpad(span(r), sw), "  ",
+              lpad(r.ngaps == 0 ? "—" : @sprintf("%.1f", r.mean_length), 6), "  │")
+        for k in eachindex(b)
+            write(buf, ' ')
+            share = r.nmissing == 0 ? 0.0 : hist[k, i] / r.nmissing
+            if share <= 0
+                write(buf, ' '^cws[k])
+            else
+                use_color && write(buf, _fg_rgb(_ramp_rgb(ramp, share)))
+                write(buf, _SPARK_CHARS[clamp(ceil(Int, 8 * share), 1, 8)]^cws[k])
+                use_color && write(buf, rst)
+            end
+        end
+        write(buf, '\n')
+    end
+    ng = sum(r -> r.ngaps, rows)
+    niso = sum(r -> r.isolated, rows)
+    println(buf, ' ', ng, " gap", ng == 1 ? "" : "s", " across ", length(rows), " column",
+            length(rows) == 1 ? "" : "s", " (", niso, " isolated) ┊ bars: share of each ",
+            "column's missing values lying in a gap of that length ┊ rows in ",
+            by === nothing ? "table order" : "order of $(by)")
+    write(io, take!(buf))
+    return nothing
+end
+
+missinggaps(tbl; kwargs...) = missinggaps(stdout, tbl; kwargs...)
 
 # =============================================================================
 # STAGE 2i — Medium-aware report object
@@ -4055,49 +4510,43 @@ Base.show(io::IO, r::MissingReport) = show(io, MIME"text/plain"(), r)
 
 # =============================================================================
 # Precompile workload — makes the first `plotmissing` call in a fresh REPL
-# effectively instant when the package is properly installed. Skipped
-# gracefully (via runtime `@eval`) when PrecompileTools isn't available,
-# e.g. when this file is `include()`d directly outside a Pkg environment.
+# effectively instant when the package is properly installed.
 # =============================================================================
 
-const _HAS_PRECOMPILETOOLS = try
-    @eval import PrecompileTools
-    true
-catch
-    false
-end
-
-if _HAS_PRECOMPILETOOLS
-    @eval PrecompileTools.@compile_workload begin
-        _tbl = (a = [1, missing, 3, 4],
-                b = [missing, missing, 1.0, 2.0],
-                c = ["x", "y", missing, "z"],
-                d = [Dates.Date(2024, 1, 1), Dates.Date(2024, 2, 1),
-                     missing, Dates.Date(2025, 1, 1)])
-        _io = IOContext(devnull, :color => true)
-        plotmissing(_io, _tbl)
-        plotmissing(_io, _tbl; layout=:compact, color=:always)
-        plotmissing(_io, _tbl; by=:d, period=:year)
-        missingpatterns(_io, _tbl)
-        missingsummary(_io, _tbl)
-        missingcooccurrence(_io, _tbl)
-        plotmissingdiff(_io, _tbl, _tbl)
-        missingrows(_io, _tbl)
-        missingdrop(_io, _tbl)
-        missinghtml(_tbl)
-        plotmissing(_io, _tbl; order=:cluster)
-        missingstats(_tbl)
-        missingdropstats(_tbl)
-        missingpatternstats(_tbl)
-        missingpairstats(_tbl)
-        missingrowstats(_tbl)
-        missingmcar((a = [1.0, missing, 3.0, 4.0, 2.0], b = [2.0, 1.0, missing, 5.0, 3.0]))
-        _found = missingsentinels((a = [1, 2, 9, 9, 3], s = ["x", "", "NA", "", "y"]))
-        sentinelisna(_found)
-        missingpredictors(_tbl, :b)
-        show(_io, MIME"text/plain"(), missingreport(_tbl))
-        show(_io, MIME"text/html"(), missingreport(_tbl))
-    end
+@compile_workload begin
+    _tbl = (a = [1, missing, 3, 4],
+            b = [missing, missing, 1.0, 2.0],
+            c = ["x", "y", missing, "z"],
+            d = [Dates.Date(2024, 1, 1), Dates.Date(2024, 2, 1),
+                 missing, Dates.Date(2025, 1, 1)])
+    _io = IOContext(devnull, :color => true)
+    plotmissing(_io, _tbl)
+    plotmissing(_io, _tbl; layout=:compact, color=:always)
+    plotmissing(_io, _tbl; by=:d, period=:year)
+    missingpatterns(_io, _tbl)
+    missingsummary(_io, _tbl)
+    missingcooccurrence(_io, _tbl)
+    plotmissingdiff(_io, _tbl, _tbl)
+    missingrows(_io, _tbl)
+    missingdrop(_io, _tbl)
+    missinghtml(_tbl)
+    plotmissing(_io, _tbl; order=:cluster)
+    missingstats(_tbl)
+    missingdropstats(_tbl)
+    missingpatternstats(_tbl)
+    missingpairstats(_tbl)
+    missingrowstats(_tbl)
+    missingmcar((a = [1.0, missing, 3.0, 4.0, 2.0], b = [2.0, 1.0, missing, 5.0, 3.0]))
+    _found = missingsentinels((a = [1, 2, 9, 9, 3], s = ["x", "", "NA", "", "y"]))
+    sentinelisna(_found)
+    missingpredictors(_tbl, :b)
+    missingpredictors(_io, _tbl, :b)
+    missingmcar(_io, (a = [1.0, missing, 3.0, 4.0, 2.0], b = [2.0, 1.0, missing, 5.0, 3.0]))
+    missinggaps(_io, _tbl)
+    missinggaps(_io, _tbl; by=:d)
+    missinggapstats(_tbl)
+    show(_io, MIME"text/plain"(), missingreport(_tbl))
+    show(_io, MIME"text/html"(), missingreport(_tbl))
 end
 
 end

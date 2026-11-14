@@ -12,7 +12,7 @@ using MissingPatterns: _parse_hex, _ramp_rgb, _blend, ColorRamp, _PRESENT_RGB,
                         render_grid!, render_summary!, render_grid_compact!,
                         render_summary_compact!, render_pattern_table!,
                         _prop_to_char, _seriate_columns, _column_order,
-                        _MISSING_GROUP_LABEL
+                        _MISSING_GROUP_LABEL, _padjust
 using MissingPatterns: Tables
 
 const ANSI_RE = r"\e\[[0-9;]*m"
@@ -1742,6 +1742,8 @@ end
         mixed = (a = [1.0, missing, 3.0, 4.0, 2.5], s = ["x", "y", missing, "z", "w"],
                  f = [true, false, true, missing, true], b = [2.0, 1.0, missing, 5.0, 3.5])
         @test missingmcar(mixed).columns == [:a, :b]
+        @test missingmcar(mixed).skipped == [:s, :f]       # Bool is not tested either
+        @test missingmcar(mixed; columns=[:a]).skipped == Symbol[]
         @test missingmcar(mixed; columns=["b", :a]).columns == [:b, :a]
         @test_throws ArgumentError missingmcar(mixed; columns=[:s])
         @test_throws ArgumentError missingmcar(mixed; columns=[:nope])
@@ -1870,6 +1872,145 @@ end
         coded = (y = [isodd(i) ? 9 : 1 for i in 1:20], v = Float64.(1:20))
         @test_throws ArgumentError missingpredictors(coded, :y)
         @test only(missingpredictors(coded, :y; isna=(y = x -> ismissing(x) || x == 9,))).n_missing == 10
+    end
+
+    @testset "p-value adjustment" begin
+        p = [0.01, 0.04, NaN, 0.03, 0.005]
+        # m = 4 (the NaN is not a test); sorted: 0.005, 0.01, 0.03, 0.04
+        @test _padjust(p, :none)[[1, 2, 4, 5]] == p[[1, 2, 4, 5]]
+        @test _padjust(p, :bonferroni) ≈ [0.04, 0.16, NaN, 0.12, 0.02] nans=true
+        # Holm: 4·0.005, 3·0.01, 2·0.03, 1·0.04, running max
+        @test _padjust(p, :holm) ≈ [0.03, 0.06, NaN, 0.06, 0.02] nans=true
+        # BH: 0.005·4/1, 0.01·4/2, 0.03·4/3, 0.04·4/4, running min from the top
+        @test _padjust(p, :bh) ≈ [0.02, 0.04, NaN, 0.04, 0.02] nans=true
+        @test _padjust([0.9, 0.8], :bonferroni) == [1.0, 1.0]
+        @test all(isnan, _padjust([NaN, NaN], :holm))
+        @test isempty(_padjust(Float64[], :bh))
+        # every adjustment is at least the raw p-value and order-preserving
+        q = [0.001, 0.2, 0.03, 0.5, 0.04, 0.012]
+        for m in (:holm, :bh, :bonferroni)
+            a = _padjust(q, m)
+            @test all(a .>= q)
+            @test issorted(a[sortperm(q)])
+        end
+    end
+
+    @testset "missingpredictors padj and display" begin
+        n = 400
+        x  = [sin(7i) for i in 1:n]
+        g  = [("a", "b", "c")[1 + i % 3] for i in 1:n]
+        u  = [cos(11i) for i in 1:n]
+        y  = Union{Missing,Float64}[(x[i] > 0.5 || g[i] == "c") ? missing : 1.0 for i in 1:n]
+        tbl = (y = y, x = x, g = g, u = u)
+        for m in (:holm, :bh, :bonferroni, :none)
+            rs = missingpredictors(tbl, :y; adjust=m)
+            @test [r.padj for r in rs] ≈ _padjust([r.pvalue for r in rs], m)
+        end
+        @test all(r -> r.padj == r.pvalue, missingpredictors(tbl, :y; adjust=:none))
+        @test_throws ArgumentError missingpredictors(tbl, :y; adjust=:fdr)
+
+        out = rendered(missingpredictors, tbl, :y; color=:never)
+        @test occursin("Missingness of y", out)
+        @test occursin("p adj", out)
+        @test occursin("2 of 3 tests significant", out)
+        @test occursin("Holm", out)
+        @test occursin("c: ", out) && occursin("welch t", out) && occursin("χ²", out)
+        @test !occursin("\e[", out)
+        @test occursin("Benjamini–Hochberg", rendered(missingpredictors, tbl, :y;
+                                                       adjust=:bh, color=:never))
+        @test occursin("\e[38;2;", rendered(missingpredictors, tbl, :y; color=:always))
+        # a stricter α turns significance off; no tint for nonsignificant bars
+        strict = rendered(missingpredictors, (y = y, u = u), :y; color=:always, alpha=0.001)
+        @test occursin("0 of 1 test significant", strict) && !occursin("\e[38;2;", strict)
+        # the display returns nothing; the data method is unchanged
+        @test missingpredictors(IOBuffer(), tbl, :y) === nothing
+        @test occursin("no other column", rendered(missingpredictors, (y = y,), :y))
+        @test_throws ArgumentError rendered(missingpredictors, tbl, :y; alpha=1.5)
+        @test_throws ArgumentError rendered(missingpredictors, tbl, :y; bar_width=0)
+        @test_throws ArgumentError rendered(missingpredictors, tbl, :y; color=:sometimes)
+    end
+
+    @testset "missingmcar display" begin
+        xs = collect(1.0:60.0)
+        ys = Union{Missing,Float64}[x > 40 ? missing : 2x + sin(x) for x in xs]
+        out = rendered(missingmcar, (x = xs, y = ys); color=:never)
+        @test occursin("Little's MCAR test on 2 columns (x, y)", out)
+        @test occursin("evidence against MCAR", out)
+        @test occursin("60 rows used", out) && occursin("converged", out)
+        @test occursin("\e[38;2;", rendered(missingmcar, (x = xs, y = ys); color=:always))
+        # a single pattern: zero degrees of freedom
+        @test occursin("nothing to compare",
+                       rendered(missingmcar, (a = [1.0, 2.0, 4.0], b = [3.0, 1.0, 2.0])))
+        # MCAR-like holes are not rejected; options reach the test
+        zs = Union{Missing,Float64}[i % 7 == 0 ? missing : cos(3i) for i in 1:60]
+        @test occursin("MCAR not rejected",
+                       rendered(missingmcar, (x = xs, z = zs); alpha=1e-6))
+        @test occursin("on 1 column (x)", rendered(missingmcar, (x = ys, s = string.(xs))))
+        @test occursin("skipped (not real-valued): s, b",
+                       rendered(missingmcar, (x = ys, s = string.(xs), b = xs .> 3)))
+        @test !occursin("skipped", rendered(missingmcar, (x = xs, y = ys)))
+        @test !occursin("skipped", rendered(missingmcar, (x = ys, s = string.(xs)); columns=[:x]))
+        @test_throws ArgumentError rendered(missingmcar, (x = xs, y = ys); alpha=0)
+        @test_throws ArgumentError rendered(missingmcar, (x = xs, y = ys); columns=[:nope])
+    end
+
+    @testset "missinggaps" begin
+        v = Union{Missing,Int}[missing, 1, missing, missing, missing, 2, 3, missing, 4, missing]
+        tbl = (v = v, full = collect(1:10))
+        g = only(r for r in missinggapstats(tbl) if r.column == :v)
+        @test g.nmissing == 6 && g.ngaps == 4 && g.isolated == 3
+        @test (g.longest, g.longest_start, g.longest_stop) == (3, 3, 5)
+        @test g.mean_length ≈ 1.5
+        f = only(r for r in missinggapstats(tbl) if r.column == :full)
+        @test (f.ngaps, f.longest, f.longest_start, f.mean_length) == (0, 0, 0, 0.0)
+
+        # the histogram is weighted by values, so each column's sums to nmissing
+        t = MissingPatterns._gap_table(tbl, ismissing, nothing, [1, 2, 3])
+        @test t.hist[:, 1] == [3, 0, 3]
+        @test sum(t.hist; dims=1)[:] == [r.nmissing for r in t.rows]
+
+        # a run reaching the last row is closed; an all-missing column is one gap
+        @test only(missinggapstats((a = [1, missing, missing],))).longest_stop == 3
+        allm = only(missinggapstats((a = fill(missing, 4),)))
+        @test (allm.ngaps, allm.longest, allm.isolated) == (1, 4, 0)
+
+        # `by` reorders the rows and is left out; positions stay table rows
+        d = Date(2024, 1, 1) .+ Day.(0:9)
+        rev = (x = reverse(Union{Missing,Int}[1, missing, missing, missing, 2, 3, 4, 5, 6, 7]),
+               date = reverse(d))
+        @test [r.column for r in missinggapstats(rev)] == [:x, :date]
+        gb = only(missinggapstats(rev; by=:date))
+        @test gb.column == :x && gb.ngaps == 1 && gb.longest == 3
+        @test (gb.longest_start, gb.longest_stop) == (9, 7)
+        @test_throws ArgumentError missinggapstats(rev; by=:nope)
+
+        # isna
+        coded = (s = [1, 9, 9, 2, 9],)
+        @test only(missinggapstats(coded)).nmissing == 0
+        @test only(missinggapstats(coded; isna=(s = x -> x == 9,))).longest == 2
+
+        out = rendered(missinggaps, tbl; color=:never)
+        @test occursin("longest", out) && occursin("3–5", out)
+        @test occursin("4 gaps across 2 columns (3 isolated)", out)
+        lines = split(out, '\n')
+        @test startswith(lines[2], " v")                  # sortby=:longest
+        @test occursin("—", lines[3])                      # no gap in `full`
+        @test !occursin("\e[", out)
+        @test occursin("\e[38;2;", rendered(missinggaps, tbl; color=:always))
+        byout = rendered(missinggaps, rev; by=:date, color=:never)
+        @test occursin("2024-01-02 … 2024-01-04", byout)
+        @test occursin("order of date", byout) && !occursin(" date  ", split(byout, '\n')[2])
+        custom = rendered(missinggaps, tbl; breaks=[1, 3], color=:never)
+        @test occursin("1–2", custom) && occursin("3+", custom)
+        @test occursin(" full", rendered(missinggaps, tbl; sortby=:name, color=:never))
+        for sb in (:missing, :gaps, :none)
+            @test occursin("gaps across", rendered(missinggaps, tbl; sortby=sb))
+        end
+        @test occursin("Empty table", rendered(missinggaps, (a = Int[],)))
+        @test_throws ArgumentError rendered(missinggaps, tbl; sortby=:size)
+        @test_throws ArgumentError rendered(missinggaps, tbl; breaks=[2, 5])
+        @test_throws ArgumentError rendered(missinggaps, tbl; breaks=[1, 1, 4])
+        @test_throws ArgumentError rendered(missinggaps, tbl; color=:yes)
     end
 
     @testset "documented examples run" begin

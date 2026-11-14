@@ -55,6 +55,7 @@ outputs of a real run, so it also reads on GitHub.
 | `missingmcar` | Little's test of missing completely at random | [Diagnostics](@ref) |
 | `missingsentinels` | Values that probably encode absence, ready for `isna` | [Diagnostics](@ref) |
 | `missingpredictors` | What a column's missingness depends on | [Diagnostics](@ref) |
+| `missinggaps` | Whether the missing values are isolated holes or blocks | [Diagnostics](@ref) |
 | `missinghtml` | The heatmap as a standalone HTML fragment | [Export and output](@ref) |
 | `missingreport` | The heatmap as an object that renders itself per medium | [Export and output](@ref) |
 

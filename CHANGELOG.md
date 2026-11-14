@@ -8,12 +8,33 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- `missingpredictors` reports multiplicity-adjusted p-values in a new `padj` field, by Holm's
+  step-down method by default; `adjust=:bh` (Benjamini–Hochberg), `:bonferroni` or `:none`
+  select another. Only the tests that could be run count towards `m`.
+- `missingpredictors(io, tbl, col)` and `missingmcar(io, tbl)` print their results: the
+  predictors as a table with p, adjusted p, a bar of `|effect|` tinted where `padj < alpha`, and
+  the `detail`; Little's test as statistic, df, p-value and a one-line reading at `alpha`. The
+  forms without `io` still return data, unchanged.
+- `missinggaps(tbl)` and `missinggapstats(tbl)` — runs of consecutive missing rows per column:
+  number of gaps, longest gap and where it lies, mean length, isolated holes, and a histogram of
+  the share of missing values in gaps of each length class (`breaks`). `by` orders the rows by a
+  column (a date…) first, so runs are consecutive in time rather than in the file.
 - `notebooks/novidades-0.7.ipynb`, the 0.7 features explained in Portuguese on a simulated table
   in the style of SUS notification data (`9` for "ignorado" in schooling, `"Ignorado"` and blanks
   in race, income refused in the Southeast and by the over-65s, lab results lost during the
   pandemic), with the formula of each diagnostic in the markdown beside the code. A chance
   finding — schooling "predicting" refused income at p ≈ 0.001 with no mechanism behind it — is
   kept and used to explain multiple testing and the Bonferroni correction (Dunn, 1961).
+
+### Changed
+- Julia 1.10 (the current LTS) is now the minimum version, up from 1.6; CI tests 1.10, the latest
+  release and nightly. PrecompileTools is loaded with a plain `using`, without the fallback for
+  running the source file outside a Pkg environment.
+- `missingmcar` results gain a `skipped` field: the columns left out for not being real-valued
+  when `columns` is not given (text, dates, `Bool`…), which the test used to drop silently. The
+  printed form lists them.
+- The rows of `missingpredictors` gain a `padj` field between `pvalue` and `effect`. Code that
+  reads fields by name is unaffected; code that destructures the rows by position is.
 
 ## [0.7.0] - 2026-10-11
 

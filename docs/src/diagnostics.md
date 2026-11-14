@@ -11,6 +11,7 @@ view:
 - [`missingmcar`](@ref) — Little's test of missing completely at random.
 - [`missingsentinels`](@ref) — values that probably encode absence, for `isna`.
 - [`missingpredictors`](@ref) — what a column's missingness depends on.
+- [`missinggaps`](@ref) — whether the missing values are isolated holes or blocks.
 
 ## `missingpatterns` — Unique missingness patterns
 
@@ -143,12 +144,24 @@ julia> missingmcar(tbl; columns=[:age, :weight])  # weight is missing at random
 (statistic = 0.3, df = 1, pvalue = 0.585, ...)
 ```
 
+With an `io` first argument the result is printed with its reading instead:
+
+```
+julia> missingmcar(stdout, tbl; columns=[:age, :income, :lab, :weight])
+ Little's MCAR test on 4 columns (age, income, lab, weight)
+ d² = 22.45   df = 11   p = 0.021
+ ▲ evidence against MCAR at α = 0.05 — the patterns differ systematically, so complete-case analysis is likely biased
+ 1000 rows used ┊ 6 patterns ┊ EM converged in 16 iterations
+```
+
 A small p-value is evidence *against* MCAR, so complete-case analysis is likely
 biased. A large one fails to reject it; it does not prove it, and it cannot tell
 MAR from MNAR. The test is defined for continuous columns: by default every
-column with a real element type is used (`Bool` excluded), and rows with nothing
-observed are left out. The result also carries the EM estimates (`mu`, `sigma`)
-and whether EM converged.
+column with a real element type is used (`Bool` excluded) and the others are
+listed in `skipped` — and on the printed form's second line — so a text or date
+column is never left out unnoticed. Rows with nothing observed are left out.
+The result also carries the EM estimates (`mu`, `sigma`) and whether EM
+converged.
 
 ## `missingsentinels` — Absence that does not say `missing`
 
@@ -196,17 +209,21 @@ missingness: that is the working diagnostic for MAR, and the list of variables
 an imputation model for the column must include.
 
 ```julia
-missingpredictors(tbl, :income; isna)
+missingpredictors(stdout, tbl, :income; isna)       # printed
+rs = missingpredictors(tbl, :income; isna)          # the same rows, as data
+missingpredictors(tbl, :income; isna, adjust=:bh)   # Benjamini–Hochberg instead of Holm
 ```
 
 ```
- column     test     pvalue    effect  detail
- region     chisq    2.18e-08    0.20  south: 42.1% of rows where missing vs 20.9% where present
- age        welch_t  1.82e-05    0.35  mean 60 where missing vs 52.47 where present
- date       welch_t  0.242       0.09  mean 2022-02-18 where missing vs 2021-12-21 where present
- schooling  welch_t  0.7         0.03  mean 1.509 where missing vs 1.472 where present
- lab        welch_t  0.756      -0.03  mean 3.429 where missing vs 3.456 where present
- weight     welch_t  0.87        0.02  mean 60.32 where missing vs 60.15 where present
+ Missingness of income: 202 of 1000 rows (20.20%)
+ column     test             p      p adj  effect              detail
+ region     χ²        2.18e-08   1.31e-07    0.20  ██          south: 42.1% of rows where missing vs 20.9% where present
+ age        welch t   1.82e-05   9.10e-05   +0.35  ████        mean 60 where missing vs 52.47 where present
+ date       welch t      0.242      0.966   +0.09  ░           mean 2022-02-18 where missing vs 2021-12-21 where present
+ schooling  welch t      0.700      1.000   +0.03  ░           mean 1.509 where missing vs 1.472 where present
+ lab        welch t      0.756      1.000   -0.03  ░           mean 3.429 where missing vs 3.456 where present
+ weight     welch t      0.870      1.000   +0.02  ░           mean 60.32 where missing vs 60.15 where present
+ 2 of 6 tests significant at α = 0.05 after Holm adjustment ┊ effect: standardized mean difference for numbers and dates, Cramér's V otherwise (bar capped at 1)
 ```
 
 Income is refused more in the south and by older respondents — which is how
@@ -217,4 +234,47 @@ others it is Cramér's V. Dates are compared as dates, which catches what
 `p = 1.7e-19` and a mean a year earlier where `lab` is missing.
 
 One test is run per column, so with many columns a few unrelated ones will come
-out significant by chance; read the effect sizes alongside the p-values.
+out significant by chance. `padj` corrects for that: by default with Holm's
+(1979) method, which bounds the chance of *any* false positive;
+`adjust=:bh` uses Benjamini & Hochberg (1995), which bounds the expected share
+of false positives among the columns declared significant and is the more
+powerful with many columns; `:bonferroni` and `:none` are also accepted. The
+printed table tints the effect bar of the columns with `padj < alpha`
+(default `0.05`). Read the effect sizes alongside: in a large table a tiny
+effect is significant even after adjustment.
+
+## `missinggaps` — Isolated holes or blocks
+
+Two columns can both be 10% missing and need opposite treatment: one lost a
+value here and there, which interpolation or any imputation handles; the other
+lost a contiguous stretch — a sensor down for three weeks, a questionnaire block
+a whole wave skipped — with nothing observed nearby to impute from.
+`missinggaps` measures the runs of consecutive missing rows in each column, in
+table order or in the order of a `by` column:
+
+```julia
+missinggaps(tbl)
+missinggaps(tbl; by = :date)                 # consecutive in time, not in the file
+missinggaps(tbl; breaks = [1, 2, 8, 31])     # length classes 1, 2–7, 8–30, 31+
+missinggaps(tbl; sortby = :missing)          # :longest (default), :missing, :gaps, :name, :none
+```
+
+On daily weather records:
+
+```
+ column   missing    gaps  longest  date                       mean  │ 1   2   3–5 6–10 11–30 31–100 101+
+ rain          23       2       22  2024-02-09 … 2024-03-01    11.5  │ ▁▁▁              █████
+ wind           8       3        4  2024-04-09 … 2024-04-12     2.7  │ ▁▁▁     ▇▇▇
+ temp          17      16        2  2024-02-02 … 2024-02-03     1.1  │ ███ ▁▁▁
+ 21 gaps across 3 columns (17 isolated) ┊ bars: share of each column's missing values lying in a gap of that length ┊ rows in order of date
+```
+
+`temp` and `rain` are missing about as often, but `temp` lost single days —
+interpolating them is harmless — while almost all of `rain`'s missing values
+sit in one three-week hole. The histogram is weighted by values, not by runs:
+each bar is the share of the column's missing values lying in a gap of that
+length, so a column's bars always add up to its missing count. With `by`, the
+`by` column is left out and the longest gap is reported in its units; rows
+where it is `missing` go last. [`missinggapstats`](@ref) returns one row per column with
+`ngaps`, `longest`, `longest_start`/`longest_stop` (row numbers of the table),
+`mean_length` and `isolated`.

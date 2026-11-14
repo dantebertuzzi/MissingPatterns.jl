@@ -261,6 +261,42 @@ with ``k - 1`` degrees of freedom, and the effect is Cramér's (1946) ``V =
 \sqrt{\chi^2 / (N(\min(2, k) - 1))} = \sqrt{\chi^2/N}``. The level reported in
 `detail` maximizes ``O_{1\ell}/N_1 - O_{2\ell}/N_2``.
 
+**Adjusted p-values.** Of the ``k`` columns, the ``m`` whose test could be run
+have p-values sorted as ``p_{(1)} \le \dots \le p_{(m)}``. Bonferroni (Dunn,
+1961) gives ``\tilde p_{(i)} = \min(1, m\,p_{(i)})``; Holm's (1979)
+step-down method, the default,
+
+```math
+\tilde p_{(i)} = \max_{j \le i} \ \min\bigl(1,\ (m - j + 1)\, p_{(j)}\bigr),
+```
+
+controls the family-wise error rate at the same level and rejects at least as
+much; Benjamini & Hochberg's (1995) step-up method (`adjust = :bh`),
+
+```math
+\tilde p_{(i)} = \min_{j \ge i} \ \min\Bigl(1,\ \frac{m}{j}\, p_{(j)}\Bigr),
+```
+
+controls the false discovery rate instead. A column is declared significant
+when ``\tilde p < \alpha``.
+
+## Gap lengths (`missinggaps`, `missinggapstats`)
+
+With rows visited in the order ``\pi`` (table order, or the sort order of
+`by`), a *gap* of column ``j`` is a maximal run ``\pi(a), \dots, \pi(b)`` with
+``m_{\pi(r)j} = 1`` for every ``a \le r \le b``; its length is ``L = b - a +
+1``. Then `ngaps` is the number of gaps, `longest` ``= \max L``, `isolated` the
+number with ``L = 1`` and `mean_length` ``= \sum L / \texttt{ngaps} =
+\texttt{nmissing}/\texttt{ngaps}``. With length classes ``[c_k, c_{k+1})``
+from `breaks`, the bar of class ``k`` is
+
+```math
+h_k = \frac{1}{\texttt{nmissing}} \sum_{\text{gaps}\ g:\ c_k \le L_g < c_{k+1}} L_g,
+```
+
+the share of the column's missing values lying in a gap of that length, so
+``\sum_k h_k = 1``.
+
 ## Sentinel detection (`missingsentinels`)
 
 These rules are this package's heuristic, not a published test. Text is
