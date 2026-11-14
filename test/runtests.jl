@@ -2030,6 +2030,11 @@ end
         @test length(filter(r -> r.pattern.age && !r.pattern.income, ps)) == 1
         @test length(filter(r -> r.nmissing == 0, ps)) == 1
 
+        # README / data.md: missinggapstats
+        gs = missinggapstats(df)
+        @test [(r.column, r.ngaps, r.longest) for r in gs] ==
+              [(:age, 2, 1), (:income, 2, 1), (:city, 1, 1)]
+
         rs = missingrowstats(df)
         @test only(r.nrows for r in rs if r.nmissing == 0) == 1
         @test sum(r.nrows for r in rs if r.nmissing > 0) == 4

@@ -15,6 +15,8 @@ using Pkg
 Pkg.add("MissingPatterns")
 ```
 
+Requires Julia 1.10 (the current LTS) or later.
+
 ## Quick Start
 
 ```julia
@@ -30,7 +32,7 @@ plotmissing(tbl)
 
 ## Notebooks
 
-Four notebooks run in Google Colab with nothing to install — pick the Julia
+Six notebooks run in Google Colab with nothing to install — pick the Julia
 runtime under *Runtime ▸ Change runtime type*. Each is committed with the
 outputs of a real run, so it also reads on GitHub.
 

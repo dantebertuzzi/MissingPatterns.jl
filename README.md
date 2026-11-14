@@ -589,6 +589,9 @@ filter(r -> r.nmissing == 0, ps)                      # the complete-case patter
 rs = missingrowstats(df)
 only(r.nrows for r in rs if r.nmissing == 0)  # complete-case count
 sum(r.nrows for r in rs if r.nmissing > 0)    # rows lost to listwise deletion
+
+gs = missinggapstats(df)
+[(r.column, r.ngaps, r.longest) for r in gs]  # isolated holes or blocks, per column
 ```
 
 `missingpairstats` returns **both** ϕ and Jaccard rather than selecting one
@@ -626,8 +629,11 @@ plotmissing(tbl; layout=:compact)
 
 ## Output Redirection
 
-Every function (except `missinghtml`, which returns/writes a `String`)
-accepts an optional leading `io::IO` argument, defaulting to `stdout`:
+Every display function accepts an optional leading `io::IO` argument,
+defaulting to `stdout`. Three entry points work the other way round:
+`missingmcar` and `missingpredictors` return data when called without `io`
+and print only when given one, and `missinghtml` returns (or writes) a
+`String`. The `*stats` functions and `missingsentinels` always return data.
 
 ```julia
 # Write to a file

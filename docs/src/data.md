@@ -39,6 +39,9 @@ rs = missingrowstats(df)
 only(r.nrows for r in rs if r.nmissing == 0)  # complete-case count
 sum(r.nrows for r in rs if r.nmissing > 0)    # rows lost to listwise deletion
 
+gs = missinggapstats(df)
+[(r.column, r.ngaps, r.longest) for r in gs]  # isolated holes or blocks, per column
+
 steps = missingdropstats(df)
 steps[argmax([r.cells for r in steps])]       # the most useful trade-off
 [r.dropped for r in steps if r.dropped !== nothing]   # the drop order

@@ -39,6 +39,13 @@ unknown keyword is an error immediately, not at display time.
 
 ## Output Redirection
 
+Every display function accepts an optional leading `io::IO` argument,
+defaulting to `stdout`. Three entry points work the other way round:
+[`missingmcar`](@ref) and [`missingpredictors`](@ref) return data when called
+without `io` and print only when given one, and [`missinghtml`](@ref) returns
+(or writes) a `String`. The `*stats` functions and [`missingsentinels`](@ref)
+always return data.
+
 ```julia
 # Write to file
 open("missing_report.txt", "w") do f
