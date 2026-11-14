@@ -8,6 +8,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- `notebooks/whats-new-0.8.ipynb` and `notebooks/novidades-0.8.ipynb` (in Portuguese), the
+  release's features on the 0.7 tables: the printed MCAR test and what it skips, adjusted p-values
+  — including a chance finding that survives Holm's adjustment and one that does not — and
+  `missinggaps` separating a three-week outage from scattered holes, with run lengths compared
+  against the geometric expectation `1 / (1 − q)` of independent missingness.
 - `missingpredictors` reports multiplicity-adjusted p-values in a new `padj` field, by Holm's
   step-down method by default; `adjust=:bh` (Benjamini–Hochberg), `:bonferroni` or `:none`
   select another. Only the tests that could be run count towards `m`.
