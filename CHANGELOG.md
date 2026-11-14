@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.8.0] - 2026-11-14
+
 ### Added
 - `notebooks/whats-new-0.8.ipynb` and `notebooks/novidades-0.8.ipynb` (in Portuguese), the
   release's features on the 0.7 tables: the printed MCAR test and what it skips, adjusted p-values

@@ -188,7 +188,7 @@ version = "0.1.2"
 deps = ["Dates", "LinearAlgebra", "PrecompileTools", "Printf", "Tables"]
 path = "/home/dantebertuzzi/Documentos/my-projects/julia/packages/MissingPatterns.jl"
 uuid = "41be38da-c9ad-4b24-9b1b-21c83f144a15"
-version = "0.7.0"
+version = "0.8.0"
 
 [[deps.Mmap]]
 uuid = "a63ad114-7e13-5084-954f-fe012c677804"
