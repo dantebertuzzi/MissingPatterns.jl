@@ -1,0 +1,3 @@
+# Example notebooks are documentation, not package code: keep them out of
+# the repository language stats so GitHub reports this package as Julia.
+notebooks/** linguist-documentation
